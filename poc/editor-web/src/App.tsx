@@ -11,6 +11,7 @@ import { PreviewPanel } from "./components/Preview/PreviewPanel";
 import { InspectorPanel } from "./components/Inspector/InspectorPanel";
 import { MediaBinPanel } from "./components/MediaBin/MediaBinPanel";
 import { DiagnosticsPanel } from "./components/Diagnostics/DiagnosticsPanel";
+import { ExportModal } from "./components/Export/ExportModal";
 
 type TrackKind = "video" | "overlay" | "audio";
 
@@ -54,6 +55,11 @@ type ProjectState = {
     url: string;
     durationMs?: number;
     name?: string;
+    codec?: string;
+    width?: number;
+    height?: number;
+    thumbnails?: string[];
+    waveform?: number[];
   }>;
   timeline: {
     durationMs: number;
@@ -91,6 +97,7 @@ type InteractionPreview = {
 };
 
 type CollisionMode = "no-overlap" | "push" | "allow-overlap";
+type RippleMode = "none" | "ripple-delete";
 
 type SeekReason = "preview" | "qa";
 
@@ -187,6 +194,33 @@ type DecodeQaApi = {
   };
 };
 
+type ExportJobStatus = "queued" | "running" | "completed" | "failed" | "canceled";
+
+type ExportJobState = {
+  jobId: string;
+  status: ExportJobStatus;
+  progress: number;
+  attempts?: number;
+  outputUrl?: string;
+  error?: string;
+};
+
+type AnalysisWorkerInMessage = {
+  type: "analyze";
+  assetId: string;
+  buffer: ArrayBuffer;
+  durationMs: number;
+  thumbnailsPerSecond?: number;
+};
+
+type AnalysisWorkerOutMessage = {
+  type: "analysis";
+  assetId: string;
+  waveform: number[];
+  thumbnails: string[];
+  codecGuess: string | null;
+};
+
 declare global {
   interface Window {
     __MAV_DECODE_QA__?: DecodeQaApi;
@@ -196,6 +230,8 @@ declare global {
 const STORAGE_KEY = "mav.poc.editor.state.v2";
 const MIN_CLIP_DURATION_MS = 100;
 const DEFAULT_QA_SCENARIOS = 50;
+const HISTORY_LIMIT = 80;
+const PLAYBACK_TICK_LIMIT_MS = 50;
 
 function toUs(ms: number): number {
   return Math.round(ms * 1000);
@@ -212,6 +248,13 @@ function clamp(value: number, min: number, max: number): number {
 function quantize(value: number, step: number): number {
   if (step <= 1) return value;
   return Math.round(value / step) * step;
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select" || tag === "button") return true;
+  return target.isContentEditable;
 }
 
 function createInitialProject(): ProjectState {
@@ -474,11 +517,15 @@ export default function App() {
   const [project, setProject] = useState<ProjectState>(createInitialProject);
   const [playheadMs, setPlayheadMs] = useState(1200);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [selectedClipKeys, setSelectedClipKeys] = useState<string[]>([]);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(80);
   const [snapEnabled, setSnapEnabled] = useState(true);
+  const [altSnapDisabled, setAltSnapDisabled] = useState(false);
   const [snapMs, setSnapMs] = useState(100);
   const [collisionMode, setCollisionMode] = useState<CollisionMode>("no-overlap");
+  const [rippleMode, setRippleMode] = useState<RippleMode>("none");
   const [log, setLog] = useState("Ready.");
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
@@ -512,9 +559,20 @@ export default function App() {
   });
 
   const [interactionPreview, setInteractionPreview] = useState<InteractionPreview | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportJob, setExportJob] = useState<ExportJobState | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
 
   const dragRef = useRef<DragState | null>(null);
   const dragRafRef = useRef<number | null>(null);
+  const playbackRef = useRef<{ rafId: number | null; lastTs: number | null }>({
+    rafId: null,
+    lastTs: null,
+  });
+  const historyRef = useRef<{ undo: ProjectState[]; redo: ProjectState[] }>({ undo: [], redo: [] });
+  const analysisWorkerRef = useRef<Worker | null>(null);
+  const assetThumbBusyRef = useRef<Set<string>>(new Set());
+  const exportPollTimerRef = useRef<number | null>(null);
 
   const decodeWorkerRef = useRef<Worker | null>(null);
   const decodeRequestIdRef = useRef(0);
@@ -531,17 +589,28 @@ export default function App() {
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fallbackVideoRef = useRef<HTMLVideoElement | null>(null);
   const assetFilesRef = useRef<Map<string, File>>(new Map());
+  const previewAssetIdRef = useRef<string | null>(null);
 
   const webCodecsAvailable = useMemo(
     () => typeof VideoDecoder !== "undefined" && typeof VideoEncoder !== "undefined",
     [],
   );
-  const devMode = useMemo(
-    () => new URLSearchParams(window.location.search).get("dev") === "1",
+  const devMode = useMemo(() => {
+    const searchDev = new URLSearchParams(window.location.search).get("dev") === "1";
+    if (!searchDev) return false;
+    if (!import.meta.env.PROD) return true;
+    return window.localStorage.getItem("mavDev") === "1";
+  }, []);
+  const renderWorkerBaseUrl = useMemo(
+    () => (import.meta.env.VITE_RENDER_WORKER_URL as string | undefined) ?? "http://localhost:8790",
     [],
   );
+  const snapActive = snapEnabled && !altSnapDisabled;
 
   const playheadUs = useMemo(() => toUs(playheadMs), [playheadMs]);
+  const clipKey = (trackId: string, clipId: string) => `${trackId}:${clipId}`;
+  const selectedClipSet = useMemo(() => new Set(selectedClipKeys), [selectedClipKeys]);
+  const selectedClipCount = selectedClipKeys.length;
 
   const selectedClip = useMemo(() => {
     const pos = findClip(project, selection);
@@ -549,8 +618,25 @@ export default function App() {
     return project.timeline.tracks[pos.trackIndex].clips[pos.clipIndex];
   }, [project, selection]);
 
-  const setProjectWithNormalize = (updater: (prev: ProjectState) => ProjectState) => {
-    setProject((prev) => normalizeProject(updater(prev)));
+  const clipExists = (trackId: string, clipId: string) =>
+    project.timeline.tracks.some((track) => track.id === trackId && track.clips.some((clip) => clip.id === clipId));
+
+  const setProjectWithNormalize = (
+    updater: (prev: ProjectState) => ProjectState,
+    options?: { recordHistory?: boolean },
+  ) => {
+    const recordHistory = options?.recordHistory ?? true;
+    setProject((prev) => {
+      const next = normalizeProject(updater(prev));
+      if (recordHistory && JSON.stringify(prev) !== JSON.stringify(next)) {
+        historyRef.current.undo.push(prev);
+        if (historyRef.current.undo.length > HISTORY_LIMIT) {
+          historyRef.current.undo.splice(0, historyRef.current.undo.length - HISTORY_LIMIT);
+        }
+        historyRef.current.redo = [];
+      }
+      return next;
+    });
   };
 
   const getClipRenderState = (trackId: string, clip: Clip): Clip => {
@@ -587,7 +673,7 @@ export default function App() {
     if (drag.mode === "move") {
       let candidateStart = original.startMs + deltaMs;
       const candidateEnd = candidateStart + original.durationMs;
-      if (snapEnabled) {
+      if (snapActive) {
         const startSnap = nearestSnap(candidateStart, drag.snapTargetsMs, thresholdMs);
         const endSnap = nearestSnap(candidateEnd, drag.snapTargetsMs, thresholdMs);
 
@@ -600,7 +686,7 @@ export default function App() {
         }
       }
 
-      if (snapEnabled) {
+      if (snapActive) {
         candidateStart = quantize(candidateStart, snapMs);
       }
 
@@ -610,7 +696,7 @@ export default function App() {
     if (drag.mode === "resize-start") {
       const maxStart = original.startMs + original.durationMs - minDuration;
       let candidateStart = clamp(original.startMs + deltaMs, 0, maxStart);
-      if (snapEnabled) {
+      if (snapActive) {
         const snap = nearestSnap(candidateStart, drag.snapTargetsMs, thresholdMs);
         if (snap) {
           candidateStart = snap.value;
@@ -630,7 +716,7 @@ export default function App() {
     if (drag.mode === "resize-end") {
       let candidateEnd = original.startMs + original.durationMs + deltaMs;
       const minEnd = original.startMs + MIN_CLIP_DURATION_MS;
-      if (snapEnabled) {
+      if (snapActive) {
         const snap = nearestSnap(candidateEnd, drag.snapTargetsMs, thresholdMs);
         if (snap) {
           candidateEnd = snap.value;
@@ -753,6 +839,28 @@ export default function App() {
     clip: Clip,
   ) => {
     if (event.button !== 0) return;
+    const key = clipKey(trackId, clip.id);
+
+    if (event.shiftKey || event.metaKey || event.ctrlKey) {
+      setSelectedClipKeys((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) {
+          next.delete(key);
+        } else {
+          next.add(key);
+        }
+        const ordered = [...next];
+        const primary = ordered.at(-1);
+        if (primary) {
+          const [primaryTrackId, primaryClipId] = primary.split(":");
+          setSelection({ trackId: primaryTrackId, clipId: primaryClipId });
+        } else {
+          setSelection(null);
+        }
+        return ordered;
+      });
+      return;
+    }
 
     const rect = event.currentTarget.getBoundingClientRect();
     const localX = event.clientX - rect.left;
@@ -778,6 +886,7 @@ export default function App() {
     };
 
     setSelection({ trackId, clipId: clip.id });
+    setSelectedClipKeys([key]);
     setInteractionPreview({
       trackId,
       clipId: clip.id,
@@ -807,10 +916,28 @@ export default function App() {
     });
   };
 
+  const nudgeSelected = (deltaMs: number) => {
+    if (selectedClipSet.size === 0) return;
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.map((track) => {
+        let changed = false;
+        const clips = track.clips.map((clip) => {
+          if (!selectedClipSet.has(clipKey(track.id, clip.id))) return clip;
+          changed = true;
+          const raw = clip.startMs + deltaMs;
+          const snapped = snapActive ? quantize(raw, snapMs) : raw;
+          return sanitizeClip({ ...clip, startMs: Math.max(0, snapped) });
+        });
+        return changed ? { ...track, clips: sortClips(clips) } : track;
+      });
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+  };
+
   const moveSelected = (deltaMs: number) => {
     updateSelectedClip((clip) => {
       const raw = clip.startMs + deltaMs;
-      const snapped = snapEnabled ? quantize(raw, snapMs) : raw;
+      const snapped = snapActive ? quantize(raw, snapMs) : raw;
       return { ...clip, startMs: Math.max(0, snapped) };
     });
   };
@@ -819,7 +946,7 @@ export default function App() {
     updateSelectedClip((clip) => {
       const maxStart = clip.startMs + clip.durationMs - MIN_CLIP_DURATION_MS;
       const targetStart = clamp(clip.startMs + deltaMs, 0, maxStart);
-      const snapped = snapEnabled ? quantize(targetStart, snapMs) : targetStart;
+      const snapped = snapActive ? quantize(targetStart, snapMs) : targetStart;
       const finalStart = clamp(snapped, 0, maxStart);
       const shifted = finalStart - clip.startMs;
       const durationMs = clip.durationMs - shifted;
@@ -835,7 +962,7 @@ export default function App() {
   const trimSelectedEnd = (deltaMs: number) => {
     updateSelectedClip((clip) => {
       const rawDuration = clip.durationMs + deltaMs;
-      const snapped = snapEnabled ? quantize(rawDuration, snapMs) : rawDuration;
+      const snapped = snapActive ? quantize(rawDuration, snapMs) : rawDuration;
       const durationMs = Math.max(MIN_CLIP_DURATION_MS, snapped);
       return {
         ...clip,
@@ -843,6 +970,39 @@ export default function App() {
         outMs: clip.inMs + durationMs,
       };
     });
+  };
+
+  const removeSelected = () => {
+    if (selectedClipSet.size === 0) return;
+
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.map((track) => {
+        const removed = track.clips
+          .filter((clip) => selectedClipSet.has(clipKey(track.id, clip.id)))
+          .sort((a, b) => a.startMs - b.startMs);
+        if (removed.length === 0) return track;
+
+        const baseClips = track.clips.filter((clip) => !selectedClipSet.has(clipKey(track.id, clip.id)));
+        if (rippleMode !== "ripple-delete") {
+          return { ...track, clips: sortClips(baseClips) };
+        }
+
+        const shifted = baseClips.map((clip) => {
+          const delta = removed.reduce((acc, removedClip) => {
+            const removedEnd = removedClip.startMs + removedClip.durationMs;
+            if (removedEnd <= clip.startMs) return acc + removedClip.durationMs;
+            return acc;
+          }, 0);
+          if (delta <= 0) return clip;
+          return sanitizeClip({ ...clip, startMs: Math.max(0, clip.startMs - delta) });
+        });
+        return { ...track, clips: sortClips(shifted) };
+      });
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+
+    setSelection(null);
+    setSelectedClipKeys([]);
   };
 
   const splitSelected = () => {
@@ -857,7 +1017,7 @@ export default function App() {
       const clip = clips[pos.clipIndex];
 
       const splitAt = clamp(
-        snapEnabled ? quantize(playheadMs, snapMs) : playheadMs,
+        snapActive ? quantize(playheadMs, snapMs) : playheadMs,
         clip.startMs + MIN_CLIP_DURATION_MS,
         clip.startMs + clip.durationMs - MIN_CLIP_DURATION_MS,
       );
@@ -888,6 +1048,7 @@ export default function App() {
       tracks[pos.trackIndex] = track;
 
       setSelection({ trackId: track.id, clipId: right.id });
+      setSelectedClipKeys([clipKey(track.id, right.id)]);
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
   };
@@ -908,6 +1069,7 @@ export default function App() {
           transform: { x: 0, y: 0, scale: 1, rotation: 0 },
         };
         setSelection({ trackId: track.id, clipId: id });
+        setSelectedClipKeys([clipKey(track.id, id)]);
         return { ...track, clips: [...track.clips, next] };
       });
       return { ...prev, timeline: { ...prev.timeline, tracks } };
@@ -967,6 +1129,9 @@ export default function App() {
       const parsed = JSON.parse(raw) as ProjectState;
       const normalized = normalizeProject(parsed);
       setProject(normalized);
+      historyRef.current = { undo: [], redo: [] };
+      setSelection(null);
+      setSelectedClipKeys([]);
       setLog("Project loaded from local storage.");
     } catch {
       setLog("Saved project is invalid JSON.");
@@ -986,11 +1151,25 @@ export default function App() {
   };
 
   const undo = () => {
-    setLog("Undo is not wired yet (stub).");
+    const previous = historyRef.current.undo.pop();
+    if (!previous) {
+      setLog("Nothing to undo.");
+      return;
+    }
+    historyRef.current.redo.push(project);
+    setProject(normalizeProject(previous));
+    setLog("Undo applied.");
   };
 
   const redo = () => {
-    setLog("Redo is not wired yet (stub).");
+    const next = historyRef.current.redo.pop();
+    if (!next) {
+      setLog("Nothing to redo.");
+      return;
+    }
+    historyRef.current.undo.push(project);
+    setProject(normalizeProject(next));
+    setLog("Redo applied.");
   };
 
   const appendDecoderLog = (line: string) => {
@@ -1044,6 +1223,129 @@ export default function App() {
         appendDecoderLog(`SEEK ERROR: ${String(error)}`);
       });
     }, 33);
+  };
+
+  const stopPlayback = () => {
+    const current = playbackRef.current;
+    if (current.rafId != null) {
+      cancelAnimationFrame(current.rafId);
+      current.rafId = null;
+    }
+    current.lastTs = null;
+    setIsPlaying(false);
+  };
+
+  const togglePlayback = () => {
+    setIsPlaying((prev) => !prev);
+  };
+
+  const clearExportPolling = () => {
+    if (exportPollTimerRef.current != null) {
+      window.clearInterval(exportPollTimerRef.current);
+      exportPollTimerRef.current = null;
+    }
+  };
+
+  const refreshExportJob = async (jobId: string) => {
+    const response = await fetch(`${renderWorkerBaseUrl}/api/render/jobs/${jobId}`);
+    if (!response.ok) {
+      throw new Error(`Status check failed (${response.status}).`);
+    }
+
+    const payload = (await response.json()) as ExportJobState;
+    setExportJob(payload);
+    if (payload.status === "completed" || payload.status === "failed" || payload.status === "canceled") {
+      clearExportPolling();
+    }
+    return payload;
+  };
+
+  const beginExportPolling = (jobId: string) => {
+    clearExportPolling();
+    exportPollTimerRef.current = window.setInterval(() => {
+      void refreshExportJob(jobId).catch((error) => {
+        setLog(`Export poll failed: ${String(error)}`);
+      });
+    }, 1000);
+  };
+
+  const createExportJob = async () => {
+    setExportBusy(true);
+    try {
+      const normalized = normalizeProject(project);
+      const assetUrls = normalized.assets.map((asset) =>
+        asset.url.startsWith("http://") || asset.url.startsWith("https://")
+          ? asset.url
+          : `https://local.mav.invalid/assets/${asset.id}`,
+      );
+      const response = await fetch(`${renderWorkerBaseUrl}/api/render/jobs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectJson: normalized,
+          assetUrls,
+          preset: "mp4-h264-aac",
+          idempotencyKey: `${normalized.meta.projectId}:${normalized.meta.updatedAt}`,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Export submit failed (${response.status}).`);
+      }
+      const payload = (await response.json()) as ExportJobState;
+      setExportJob(payload);
+      beginExportPolling(payload.jobId);
+      setLog(`Export job submitted: ${payload.jobId}`);
+    } catch (error) {
+      setLog(`Export submit error: ${String(error)}`);
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const cancelExportJob = async () => {
+    if (!exportJob) return;
+    setExportBusy(true);
+    try {
+      const response = await fetch(`${renderWorkerBaseUrl}/api/render/jobs/${exportJob.jobId}/cancel`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error(`Cancel failed (${response.status}).`);
+      }
+      await refreshExportJob(exportJob.jobId);
+      setLog(`Export job canceled: ${exportJob.jobId}`);
+    } catch (error) {
+      setLog(`Export cancel error: ${String(error)}`);
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const retryExportJob = async () => {
+    if (!exportJob) return;
+    setExportBusy(true);
+    try {
+      const response = await fetch(`${renderWorkerBaseUrl}/api/render/jobs/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: exportJob.jobId }),
+      });
+      if (!response.ok) {
+        throw new Error(`Retry failed (${response.status}).`);
+      }
+      await refreshExportJob(exportJob.jobId);
+      beginExportPolling(exportJob.jobId);
+      setLog(`Export job retried: ${exportJob.jobId}`);
+    } catch (error) {
+      setLog(`Export retry error: ${String(error)}`);
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const downloadExport = () => {
+    if (!exportJob?.outputUrl) return;
+    window.open(exportJob.outputUrl, "_blank", "noopener,noreferrer");
   };
 
   const exportQARunResult = (result: DecodeQaRunResult | null) => {
@@ -1262,6 +1564,173 @@ export default function App() {
   };
 
   useEffect(() => {
+    const worker = new Worker(new URL("./preview/media-analysis.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    analysisWorkerRef.current = worker;
+
+    worker.onmessage = (event: MessageEvent<AnalysisWorkerOutMessage>) => {
+      const message = event.data;
+      if (message.type !== "analysis") return;
+      assetThumbBusyRef.current.delete(message.assetId);
+      setProject((prev) => ({
+        ...prev,
+        assets: prev.assets.map((asset) =>
+          asset.id === message.assetId
+            ? {
+                ...asset,
+                waveform: message.waveform,
+                thumbnails: message.thumbnails,
+                codec: asset.codec ?? message.codecGuess ?? undefined,
+              }
+            : asset,
+        ),
+      }));
+    };
+
+    return () => {
+      worker.terminate();
+      analysisWorkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selection) return;
+    if (clipExists(selection.trackId, selection.clipId)) return;
+    setSelection(null);
+    setSelectedClipKeys((prev) =>
+      prev.filter((key) => {
+        const [trackId, clipId] = key.split(":");
+        return clipExists(trackId, clipId);
+      }),
+    );
+  }, [clipExists, selection]);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      const playback = playbackRef.current;
+      if (playback.rafId != null) {
+        cancelAnimationFrame(playback.rafId);
+        playback.rafId = null;
+      }
+      playback.lastTs = null;
+      return;
+    }
+
+    const playback = playbackRef.current;
+    const tick = (ts: number) => {
+      if (!isPlaying) return;
+      const previousTs = playback.lastTs ?? ts;
+      playback.lastTs = ts;
+      const deltaMs = Math.min(PLAYBACK_TICK_LIMIT_MS, Math.max(0, ts - previousTs));
+      setPlayheadMs((prev) => {
+        const next = prev + deltaMs;
+        if (next >= project.timeline.durationMs) {
+          stopPlayback();
+          return project.timeline.durationMs;
+        }
+        return next;
+      });
+      playback.rafId = requestAnimationFrame(tick);
+    };
+
+    playback.rafId = requestAnimationFrame(tick);
+    return () => {
+      if (playback.rafId != null) {
+        cancelAnimationFrame(playback.rafId);
+        playback.rafId = null;
+      }
+      playback.lastTs = null;
+    };
+  }, [isPlaying, project.timeline.durationMs]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Alt") {
+        setAltSnapDisabled(true);
+      }
+      if (isTypingTarget(event.target)) return;
+
+      if (event.code === "Space") {
+        event.preventDefault();
+        togglePlayback();
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+        return;
+      }
+
+      if (event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        splitSelected();
+        return;
+      }
+
+      if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        removeSelected();
+        return;
+      }
+
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        setPixelsPerSecond((prev) => Math.min(260, prev + 12));
+        return;
+      }
+
+      if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        setPixelsPerSecond((prev) => Math.max(20, prev - 12));
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        const step = event.shiftKey ? -200 : -Math.round(1000 / Math.max(1, decoderFps));
+        nudgeSelected(step);
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        const step = event.shiftKey ? 200 : Math.round(1000 / Math.max(1, decoderFps));
+        nudgeSelected(step);
+      }
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Alt") {
+        setAltSnapDisabled(false);
+      }
+    };
+    const onWindowBlur = () => {
+      setAltSnapDisabled(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onWindowBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
+    };
+  }, [decoderFps, nudgeSelected, redo, removeSelected, splitSelected, togglePlayback, undo]);
+
+  useEffect(() => {
+    return () => {
+      clearExportPolling();
+    };
+  }, []);
+
+  useEffect(() => {
     window.__MAV_DECODE_QA__ = {
       run: runDecodeQA,
       getLastRun: () => lastRunResult,
@@ -1334,6 +1803,23 @@ export default function App() {
           descriptionLength: message.descriptionLength,
           timestampAuditIssueCount: message.timestampAudit?.issueCount ?? 0,
         });
+        const loadedAssetId = previewAssetIdRef.current;
+        if (loadedAssetId) {
+          setProject((prev) => ({
+            ...prev,
+            assets: prev.assets.map((asset) =>
+              asset.id === loadedAssetId
+                ? {
+                    ...asset,
+                    codec: message.codec || asset.codec,
+                    width: message.width,
+                    height: message.height,
+                    durationMs: Math.round(message.durationUs / 1000),
+                  }
+                : asset,
+            ),
+          }));
+        }
 
         return;
       }
@@ -1450,6 +1936,7 @@ export default function App() {
   const loadAssetForPreview = async (assetId: string, file: File, url: string) => {
     setVideoUrl(url);
     setPreviewAssetId(assetId);
+    previewAssetIdRef.current = assetId;
     setActiveAssetId(assetId);
     setDecoderMode(webCodecsAvailable ? "none" : "fallback");
     setIsFmp4Source(false);
@@ -1499,9 +1986,25 @@ export default function App() {
           kind: "video",
           url,
           name: file.name,
+          durationMs: 0,
         },
       ],
     }));
+
+    if (analysisWorkerRef.current && !assetThumbBusyRef.current.has(assetId)) {
+      assetThumbBusyRef.current.add(assetId);
+      const buffer = await file.arrayBuffer();
+      analysisWorkerRef.current.postMessage(
+        {
+          type: "analyze",
+          assetId,
+          buffer,
+          durationMs: 0,
+          thumbnailsPerSecond: 1,
+        } satisfies AnalysisWorkerInMessage,
+        [buffer],
+      );
+    }
 
     await loadAssetForPreview(assetId, file, url);
     setLog(`Loaded media asset: ${file.name}`);
@@ -1518,7 +2021,7 @@ export default function App() {
     setLog(`Opened asset in preview: ${asset.name ?? asset.id}`);
   };
 
-  const addAssetToTimeline = (assetId: string) => {
+  const addAssetToTimeline = (assetId: string, preferredTrackId?: string, preferredStartMs?: number) => {
     const asset = project.assets.find((item) => item.id === assetId && item.kind === "video");
     if (!asset) {
       setLog("Asset not found.");
@@ -1527,14 +2030,24 @@ export default function App() {
 
     setProjectWithNormalize((prev) => {
       const tracks = [...prev.timeline.tracks];
-      let videoTrackIndex = tracks.findIndex((track) => track.kind === "video");
+      let videoTrackIndex =
+        preferredTrackId != null ? tracks.findIndex((track) => track.id === preferredTrackId) : -1;
+      if (videoTrackIndex >= 0 && tracks[videoTrackIndex].kind !== "video") {
+        videoTrackIndex = -1;
+      }
+      if (videoTrackIndex === -1) {
+        videoTrackIndex = tracks.findIndex((track) => track.kind === "video");
+      }
       if (videoTrackIndex === -1) {
         tracks.push({ id: "video-1", kind: "video", clips: [] });
         videoTrackIndex = tracks.length - 1;
       }
 
       const videoTrack = { ...tracks[videoTrackIndex], clips: [...tracks[videoTrackIndex].clips] };
-      const nextStartMs = videoTrack.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
+      const nextStartMs =
+        typeof preferredStartMs === "number" && Number.isFinite(preferredStartMs)
+          ? Math.max(0, Math.round(preferredStartMs))
+          : videoTrack.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
       const durationMs = Math.max(
         MIN_CLIP_DURATION_MS,
         Math.round((asset.durationMs ?? videoDurationMs ?? 3000)),
@@ -1558,6 +2071,7 @@ export default function App() {
       );
 
       setSelection({ trackId: videoTrack.id, clipId: clipId });
+      setSelectedClipKeys([clipKey(videoTrack.id, clipId)]);
       setPlayheadMs(clip.startMs);
       return { ...prev, timeline: { ...prev.timeline, durationMs: timelineDuration, tracks } };
     });
@@ -1565,15 +2079,38 @@ export default function App() {
     setLog(`Added ${asset.name ?? assetId} to timeline.`);
   };
 
-  const onPreviewMetadataLoaded = (durationMs: number) => {
+  const onPreviewMetadataLoaded = (durationMs: number, width: number, height: number) => {
     setVideoDurationMs(durationMs);
     if (!previewAssetId) return;
     setProjectWithNormalize((prev) => ({
       ...prev,
       assets: prev.assets.map((asset) =>
-        asset.id === previewAssetId ? { ...asset, durationMs } : asset,
+        asset.id === previewAssetId
+          ? {
+              ...asset,
+              durationMs,
+              width: width > 0 ? width : asset.width,
+              height: height > 0 ? height : asset.height,
+            }
+          : asset,
       ),
-    }));
+    }), { recordHistory: false });
+
+    const file = assetFilesRef.current.get(previewAssetId);
+    if (!file || !analysisWorkerRef.current || assetThumbBusyRef.current.has(previewAssetId)) return;
+    assetThumbBusyRef.current.add(previewAssetId);
+    void file.arrayBuffer().then((buffer) => {
+      analysisWorkerRef.current?.postMessage(
+        {
+          type: "analyze",
+          assetId: previewAssetId,
+          buffer,
+          durationMs,
+          thumbnailsPerSecond: 2,
+        } satisfies AnalysisWorkerInMessage,
+        [buffer],
+      );
+    });
   };
 
   const zoomWidthPx = Math.max(
@@ -1581,101 +2118,139 @@ export default function App() {
     (project.timeline.durationMs / 1000) * pixelsPerSecond + 120,
   );
 
+  const setPlayheadClamped = (value: number) => {
+    setPlayheadMs(clamp(Math.round(value), 0, project.timeline.durationMs));
+  };
+
   return (
-    <EditorShell
-      toolbar={(
-        <TopToolbar
-          playheadMs={playheadMs}
-          maxPlayheadMs={project.timeline.durationMs}
-          onPlayheadChange={setPlayheadMs}
-          pixelsPerSecond={pixelsPerSecond}
-          onZoomChange={setPixelsPerSecond}
-          onSplit={splitSelected}
-          onAddOverlay={addOverlayClip}
-          onUndo={undo}
-          onRedo={redo}
-          onExport={exportProjectJson}
-          onSave={saveProject}
-          onLoad={loadProject}
-        />
-      )}
-      mediaBin={(
-        <MediaBinPanel
-          assets={project.assets}
-          activeAssetId={activeAssetId}
-          onUpload={(file) => {
-            void onPickVideo(file);
-          }}
-          onActivateAsset={(assetId) => {
-            void onActivateAsset(assetId);
-          }}
-          onAddToTimeline={addAssetToTimeline}
-        />
-      )}
-      preview={(
-        <PreviewPanel
-          canvasRef={previewCanvasRef}
-          fallbackVideoRef={fallbackVideoRef}
-          videoUrl={videoUrl}
-          onLoadedMetadata={onPreviewMetadataLoaded}
-          decoderMode={decoderMode}
-          webCodecsAvailable={webCodecsAvailable}
-          sourceDetails={sourceDetails}
-          isFmp4Source={isFmp4Source}
-        />
-      )}
-      inspector={(
-        <InspectorPanel
-          selectedClip={selectedClip}
-          onUpdateTiming={updateSelectedTiming}
-          onUpdateTransform={updateSelectedTransform}
-        />
-      )}
-      timeline={(
-        <TimelinePanel
-          tracks={project.timeline.tracks}
-          playheadMs={playheadMs}
-          pixelsPerSecond={pixelsPerSecond}
-          zoomWidthPx={zoomWidthPx}
-          snapGuideMs={snapGuideMs}
-          selection={selection}
-          collisionMode={collisionMode}
-          snapEnabled={snapEnabled}
-          snapMs={snapMs}
-          onSnapEnabledChange={setSnapEnabled}
-          onSnapMsChange={setSnapMs}
-          onCollisionModeChange={setCollisionMode}
-          getClipRenderState={getClipRenderState}
-          onClipPointerDown={onClipPointerDown}
-        />
-      )}
-      diagnostics={
-        devMode ? (
-          <DiagnosticsPanel
-            decoderLogs={decoderLogs}
-            timestampAuditSamples={timestampAuditSamples}
-            onTimestampAuditSamplesChange={setTimestampAuditSamples}
-            qaProfile={qaProfile}
-            onQaProfileChange={setQaProfile}
-            qaScenarioCount={qaScenarioCount}
-            onQaScenarioCountChange={setQaScenarioCount}
-            qaRunning={qaRunning}
-            canRunQa={decoderMode === "webcodecs"}
-            onRunQa={() => {
-              void runDecodeQA();
-            }}
-            onExportLastResult={() => {
-              exportQARunResult(lastRunResult);
-            }}
-            qaMetric={qaMetric}
-            qaHistory={qaHistory}
-            lastRunResult={lastRunResult}
-            projectSchemaSummary={{ id: projectSchema.$id, title: projectSchema.title }}
-            projectJson={normalizeProject(project)}
+    <>
+      <EditorShell
+        toolbar={(
+          <TopToolbar
+            playheadMs={playheadMs}
+            maxPlayheadMs={project.timeline.durationMs}
+            onPlayheadChange={setPlayheadClamped}
+            pixelsPerSecond={pixelsPerSecond}
+            onZoomChange={setPixelsPerSecond}
+            isPlaying={isPlaying}
+            onTogglePlay={togglePlayback}
+            onSplit={splitSelected}
+            onAddOverlay={addOverlayClip}
+            onUndo={undo}
+            onRedo={redo}
+            onExport={() => setExportOpen(true)}
+            onSave={saveProject}
+            onLoad={loadProject}
           />
-        ) : undefined
-      }
-      status={log}
-    />
+        )}
+        mediaBin={(
+          <MediaBinPanel
+            assets={project.assets}
+            activeAssetId={activeAssetId}
+            onUpload={(file) => {
+              void onPickVideo(file);
+            }}
+            onActivateAsset={(assetId) => {
+              void onActivateAsset(assetId);
+            }}
+            onAddToTimeline={(assetId) => addAssetToTimeline(assetId)}
+            onAssetDragStart={(assetId) => {
+              const asset = project.assets.find((item) => item.id === assetId);
+              setLog(`Drag asset to timeline: ${asset?.name ?? assetId}`);
+            }}
+          />
+        )}
+        preview={(
+          <PreviewPanel
+            canvasRef={previewCanvasRef}
+            fallbackVideoRef={fallbackVideoRef}
+            videoUrl={videoUrl}
+            onLoadedMetadata={onPreviewMetadataLoaded}
+            decoderMode={decoderMode}
+            webCodecsAvailable={webCodecsAvailable}
+            sourceDetails={sourceDetails}
+            isFmp4Source={isFmp4Source}
+          />
+        )}
+        inspector={(
+          <InspectorPanel
+            selectedClip={selectedClip}
+            selectedCount={selectedClipCount}
+            onUpdateTiming={updateSelectedTiming}
+            onUpdateTransform={updateSelectedTransform}
+          />
+        )}
+        timeline={(
+          <TimelinePanel
+            tracks={project.timeline.tracks}
+            playheadMs={playheadMs}
+            onPlayheadChange={setPlayheadClamped}
+            pixelsPerSecond={pixelsPerSecond}
+            zoomWidthPx={zoomWidthPx}
+            snapGuideMs={snapGuideMs}
+            selection={selection}
+            selectedClipKeys={selectedClipKeys}
+            collisionMode={collisionMode}
+            rippleMode={rippleMode}
+            snapEnabled={snapEnabled}
+            altSnapDisabled={altSnapDisabled}
+            snapMs={snapMs}
+            onSnapEnabledChange={setSnapEnabled}
+            onSnapMsChange={setSnapMs}
+            onCollisionModeChange={setCollisionMode}
+            onRippleModeChange={setRippleMode}
+            getClipRenderState={getClipRenderState}
+            onClipPointerDown={onClipPointerDown}
+            onAssetDrop={(assetId, trackId, startMs) => {
+              addAssetToTimeline(assetId, trackId, startMs);
+            }}
+          />
+        )}
+        diagnostics={
+          devMode ? (
+            <DiagnosticsPanel
+              decoderLogs={decoderLogs}
+              timestampAuditSamples={timestampAuditSamples}
+              onTimestampAuditSamplesChange={setTimestampAuditSamples}
+              qaProfile={qaProfile}
+              onQaProfileChange={setQaProfile}
+              qaScenarioCount={qaScenarioCount}
+              onQaScenarioCountChange={setQaScenarioCount}
+              qaRunning={qaRunning}
+              canRunQa={decoderMode === "webcodecs"}
+              onRunQa={() => {
+                void runDecodeQA();
+              }}
+              onExportLastResult={() => {
+                exportQARunResult(lastRunResult);
+              }}
+              qaMetric={qaMetric}
+              qaHistory={qaHistory}
+              lastRunResult={lastRunResult}
+              projectSchemaSummary={{ id: projectSchema.$id, title: projectSchema.title }}
+              projectJson={normalizeProject(project)}
+            />
+          ) : undefined
+        }
+        status={`${log} | Selected: ${selectedClipCount} | Ripple: ${rippleMode}`}
+      />
+
+      <ExportModal
+        open={exportOpen}
+        busy={exportBusy}
+        job={exportJob}
+        onClose={() => setExportOpen(false)}
+        onStart={() => {
+          void createExportJob();
+        }}
+        onCancel={() => {
+          void cancelExportJob();
+        }}
+        onRetry={() => {
+          void retryExportJob();
+        }}
+        onDownload={downloadExport}
+      />
+    </>
   );
 }

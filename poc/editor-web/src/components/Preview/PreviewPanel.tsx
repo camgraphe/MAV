@@ -4,7 +4,7 @@ type PreviewPanelProps = {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   fallbackVideoRef: RefObject<HTMLVideoElement | null>;
   videoUrl: string | null;
-  onLoadedMetadata: (durationMs: number) => void;
+  onLoadedMetadata: (durationMs: number, width: number, height: number) => void;
   decoderMode: "none" | "webcodecs" | "fallback";
   webCodecsAvailable: boolean;
   sourceDetails: {
@@ -42,7 +42,11 @@ export function PreviewPanel({
         playsInline
         preload="auto"
         onLoadedMetadata={(event) => {
-          onLoadedMetadata(Math.round(event.currentTarget.duration * 1000));
+          onLoadedMetadata(
+            Math.round(event.currentTarget.duration * 1000),
+            event.currentTarget.videoWidth,
+            event.currentTarget.videoHeight,
+          );
         }}
       />
 

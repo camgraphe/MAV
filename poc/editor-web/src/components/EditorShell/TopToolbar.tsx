@@ -4,6 +4,8 @@ type TopToolbarProps = {
   onPlayheadChange: (value: number) => void;
   pixelsPerSecond: number;
   onZoomChange: (value: number) => void;
+  isPlaying: boolean;
+  onTogglePlay: () => void;
   onSplit: () => void;
   onAddOverlay: () => void;
   onUndo: () => void;
@@ -19,6 +21,8 @@ export function TopToolbar({
   onPlayheadChange,
   pixelsPerSecond,
   onZoomChange,
+  isPlaying,
+  onTogglePlay,
   onSplit,
   onAddOverlay,
   onUndo,
@@ -61,6 +65,9 @@ export function TopToolbar({
       </div>
 
       <div className="toolbarActions buttons">
+        <button type="button" onClick={onTogglePlay}>
+          {isPlaying ? "Pause" : "Play"}
+        </button>
         <button type="button" onClick={onUndo}>
           Undo
         </button>

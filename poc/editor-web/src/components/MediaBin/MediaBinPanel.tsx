@@ -4,6 +4,11 @@ type MediaAsset = {
   url: string;
   durationMs?: number;
   name?: string;
+  codec?: string;
+  width?: number;
+  height?: number;
+  thumbnails?: string[];
+  waveform?: number[];
 };
 
 type MediaBinPanelProps = {
@@ -12,6 +17,7 @@ type MediaBinPanelProps = {
   onUpload: (file: File | null) => void;
   onActivateAsset: (assetId: string) => void;
   onAddToTimeline: (assetId: string) => void;
+  onAssetDragStart?: (assetId: string) => void;
 };
 
 function formatDuration(ms?: number) {
@@ -24,12 +30,18 @@ function formatDuration(ms?: number) {
   return `${mins}:${secs}`;
 }
 
+function formatResolution(width?: number, height?: number) {
+  if (!width || !height) return "--";
+  return `${width}x${height}`;
+}
+
 export function MediaBinPanel({
   assets,
   activeAssetId,
   onUpload,
   onActivateAsset,
   onAddToTimeline,
+  onAssetDragStart,
 }: MediaBinPanelProps) {
   const videoAssets = assets.filter((asset) => asset.kind === "video");
 
@@ -55,11 +67,23 @@ export function MediaBinPanel({
         {videoAssets.map((asset) => {
           const active = asset.id === activeAssetId;
           return (
-            <article key={asset.id} className={`assetCard ${active ? "active" : ""}`}>
+            <article
+              key={asset.id}
+              className={`assetCard ${active ? "active" : ""}`}
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.setData("text/x-mav-asset-id", asset.id);
+                event.dataTransfer.setData("text/plain", asset.id);
+                event.dataTransfer.effectAllowed = "copy";
+                onAssetDragStart?.(asset.id);
+              }}
+            >
               <div className="assetThumb">MP4</div>
               <div className="assetMeta">
                 <strong title={asset.name}>{asset.name ?? asset.id}</strong>
                 <span>{formatDuration(asset.durationMs)}</span>
+                <span>{asset.codec ?? "unknown codec"}</span>
+                <span>{formatResolution(asset.width, asset.height)}</span>
               </div>
               <div className="assetActions">
                 <button type="button" onClick={() => onActivateAsset(asset.id)}>
@@ -69,6 +93,20 @@ export function MediaBinPanel({
                   Add
                 </button>
               </div>
+              {asset.thumbnails && asset.thumbnails.length > 0 ? (
+                <div className="assetStrip">
+                  {asset.thumbnails.slice(0, 6).map((thumb, index) => (
+                    <img key={`${asset.id}-${index}`} src={thumb} alt="" loading="lazy" />
+                  ))}
+                </div>
+              ) : null}
+              {asset.waveform && asset.waveform.length > 0 ? (
+                <div className="assetWaveform" aria-hidden>
+                  {asset.waveform.slice(0, 48).map((value, index) => (
+                    <span key={`${asset.id}-wf-${index}`} style={{ height: `${Math.max(8, value * 28)}px` }} />
+                  ))}
+                </div>
+              ) : null}
             </article>
           );
         })}

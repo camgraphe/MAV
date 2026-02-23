@@ -17,11 +17,17 @@ type Clip = {
 
 type InspectorPanelProps = {
   selectedClip: Clip | null;
+  selectedCount?: number;
   onUpdateTiming: (patch: Partial<Pick<Clip, "startMs" | "durationMs" | "inMs" | "outMs">>) => void;
   onUpdateTransform: (patch: Partial<OverlayTransform>) => void;
 };
 
-export function InspectorPanel({ selectedClip, onUpdateTiming, onUpdateTransform }: InspectorPanelProps) {
+export function InspectorPanel({
+  selectedClip,
+  selectedCount = 0,
+  onUpdateTiming,
+  onUpdateTransform,
+}: InspectorPanelProps) {
   return (
     <div className="inspector">
       <div className="panelHeader">
@@ -29,6 +35,7 @@ export function InspectorPanel({ selectedClip, onUpdateTiming, onUpdateTransform
       </div>
 
       {!selectedClip ? <p className="hint">Select a clip to edit properties.</p> : null}
+      {selectedCount > 1 ? <p className="hint">{selectedCount} clips selected (editing primary selection).</p> : null}
 
       {selectedClip ? (
         <>
