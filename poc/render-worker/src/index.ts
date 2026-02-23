@@ -3,6 +3,14 @@ import express from "express";
 import { z } from "zod";
 
 type JobStatus = "queued" | "running" | "completed" | "failed" | "canceled";
+type ExportPreset = "720p" | "1080p";
+type ExportFps = 24 | 30 | 60;
+
+type RenderOptions = {
+  preset: ExportPreset;
+  fps: ExportFps;
+  format: "mp4";
+};
 
 type RenderJob = {
   id: string;
@@ -13,6 +21,8 @@ type RenderJob = {
   updatedAt: string;
   outputUrl?: string;
   error?: string;
+  renderOptions: RenderOptions;
+  sourceAssetCount: number;
   timer?: NodeJS.Timeout;
 };
 
@@ -28,6 +38,17 @@ const createJobSchema = z.object({
   projectJson: z.record(z.any()),
   assetUrls: z.array(z.string().url()),
   preset: z.enum(["mp4-h264-aac"]).default("mp4-h264-aac"),
+  renderOptions: z
+    .object({
+      preset: z.enum(["720p", "1080p"]).default("1080p"),
+      fps: z.union([z.literal(24), z.literal(30), z.literal(60)]).default(30),
+      format: z.literal("mp4").default("mp4"),
+    })
+    .default({
+      preset: "1080p",
+      fps: 30,
+      format: "mp4",
+    }),
   idempotencyKey: z.string().min(1).optional(),
 });
 
@@ -59,7 +80,10 @@ function startSimulation(job: RenderJob) {
       return;
     }
 
-    current.progress = Math.min(100, current.progress + 10);
+    const speedBoost = current.renderOptions.preset === "720p" ? 2 : 0;
+    const fpsBoost = current.renderOptions.fps === 24 ? 2 : current.renderOptions.fps === 60 ? -1 : 0;
+    const step = Math.max(5, 10 + speedBoost + fpsBoost);
+    current.progress = Math.min(100, current.progress + step);
     current.updatedAt = nowIso();
 
     if (current.progress >= 100) {
@@ -93,6 +117,8 @@ app.post("/api/render/jobs", (req, res) => {
     attempts: 1,
     createdAt: nowIso(),
     updatedAt: nowIso(),
+    renderOptions: parsed.data.renderOptions,
+    sourceAssetCount: parsed.data.assetUrls.length,
   };
 
   jobs.set(job.id, job);
@@ -102,6 +128,11 @@ app.post("/api/render/jobs", (req, res) => {
     jobId: job.id,
     status: job.status,
     progress: job.progress,
+    attempts: job.attempts,
+    renderOptions: job.renderOptions,
+    sourceAssetCount: job.sourceAssetCount,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
   });
 });
 
@@ -116,6 +147,8 @@ app.get("/api/render/jobs/:jobId", (req, res) => {
     status: job.status,
     progress: job.progress,
     attempts: job.attempts,
+    renderOptions: job.renderOptions,
+    sourceAssetCount: job.sourceAssetCount,
     outputUrl: job.outputUrl,
     error: job.error,
     createdAt: job.createdAt,
@@ -132,7 +165,16 @@ app.post("/api/render/jobs/:jobId/cancel", (req, res) => {
   if (job.timer) clearInterval(job.timer);
   job.status = "canceled";
   job.updatedAt = nowIso();
-  return res.json({ jobId: job.id, status: job.status });
+  return res.json({
+    jobId: job.id,
+    status: job.status,
+    progress: job.progress,
+    attempts: job.attempts,
+    renderOptions: job.renderOptions,
+    sourceAssetCount: job.sourceAssetCount,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  });
 });
 
 app.post("/api/render/jobs/retry", (req, res) => {
@@ -161,7 +203,12 @@ app.post("/api/render/jobs/retry", (req, res) => {
   return res.status(202).json({
     jobId: job.id,
     status: job.status,
+    progress: job.progress,
     attempts: job.attempts,
+    renderOptions: job.renderOptions,
+    sourceAssetCount: job.sourceAssetCount,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
   });
 });
 

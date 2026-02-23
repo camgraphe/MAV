@@ -197,12 +197,25 @@ type DecodeQaApi = {
 };
 
 type ExportJobStatus = "queued" | "running" | "completed" | "failed" | "canceled";
+type ExportPreset = "720p" | "1080p";
+type ExportFps = 24 | 30 | 60;
+type ExportFormat = "mp4";
+
+type ExportOptions = {
+  preset: ExportPreset;
+  fps: ExportFps;
+  format: ExportFormat;
+};
 
 type ExportJobState = {
   jobId: string;
   status: ExportJobStatus;
   progress: number;
   attempts?: number;
+  renderOptions?: ExportOptions;
+  sourceAssetCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
   outputUrl?: string;
   error?: string;
 };
@@ -237,11 +250,13 @@ declare global {
 
 const STORAGE_KEY = "mav.poc.editor.state.v2";
 const ANALYSIS_CACHE_KEY = "mav.poc.editor.analysis-cache.v1";
+const EXPORT_SESSION_KEY = "mav.poc.editor.export-session.v1";
 const MIN_CLIP_DURATION_MS = 100;
 const DEFAULT_QA_SCENARIOS = 50;
 const HISTORY_LIMIT = 80;
 const PLAYBACK_TICK_LIMIT_MS = 50;
 const ANALYSIS_CACHE_LIMIT = 24;
+const EXPORT_HISTORY_LIMIT = 8;
 
 function toUs(ms: number): number {
   return Math.round(ms * 1000);
@@ -581,9 +596,11 @@ export default function App() {
   const [interactionPreview, setInteractionPreview] = useState<InteractionPreview | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportJob, setExportJob] = useState<ExportJobState | null>(null);
+  const [exportHistory, setExportHistory] = useState<ExportJobState[]>([]);
   const [exportBusy, setExportBusy] = useState(false);
-  const [exportPreset, setExportPreset] = useState<"720p" | "1080p">("1080p");
-  const [exportFps, setExportFps] = useState<24 | 30 | 60>(30);
+  const [exportPreset, setExportPreset] = useState<ExportPreset>("1080p");
+  const [exportFps, setExportFps] = useState<ExportFps>(30);
+  const [exportValidationMessage, setExportValidationMessage] = useState<string | null>(null);
 
   const dragRef = useRef<DragState | null>(null);
   const dragRafRef = useRef<number | null>(null);
@@ -1398,30 +1415,94 @@ export default function App() {
     }
   };
 
+  const upsertExportHistory = (job: ExportJobState) => {
+    setExportHistory((prev) => {
+      const next = [job, ...prev.filter((entry) => entry.jobId !== job.jobId)];
+      return next.slice(0, EXPORT_HISTORY_LIMIT);
+    });
+  };
+
+  const persistExportSession = (job: ExportJobState | null) => {
+    try {
+      if (!job) {
+        localStorage.removeItem(EXPORT_SESSION_KEY);
+        return;
+      }
+      localStorage.setItem(
+        EXPORT_SESSION_KEY,
+        JSON.stringify({
+          jobId: job.jobId,
+          preset: exportPreset,
+          fps: exportFps,
+        }),
+      );
+    } catch {
+      // Ignore localStorage errors; session restore is optional.
+    }
+  };
+
+  const normalizeExportJobPayload = (payload: ExportJobState): ExportJobState => {
+    return {
+      ...payload,
+      renderOptions: payload.renderOptions ?? {
+        preset: exportPreset,
+        fps: exportFps,
+        format: "mp4",
+      },
+    };
+  };
+
   const refreshExportJob = async (jobId: string) => {
     const response = await fetch(`${renderWorkerBaseUrl}/api/render/jobs/${jobId}`);
     if (!response.ok) {
       throw new Error(`Status check failed (${response.status}).`);
     }
 
-    const payload = (await response.json()) as ExportJobState;
+    const payload = normalizeExportJobPayload((await response.json()) as ExportJobState);
     setExportJob(payload);
+    upsertExportHistory(payload);
+    if (payload.status === "failed") {
+      setExportValidationMessage(payload.error ?? "Export failed.");
+    } else {
+      setExportValidationMessage(null);
+    }
     if (payload.status === "completed" || payload.status === "failed" || payload.status === "canceled") {
       clearExportPolling();
+      persistExportSession(null);
+    } else {
+      persistExportSession(payload);
     }
     return payload;
   };
 
   const beginExportPolling = (jobId: string) => {
     clearExportPolling();
+    void refreshExportJob(jobId).catch((error) => {
+      setLog(`Export poll failed: ${String(error)}`);
+    });
     exportPollTimerRef.current = window.setInterval(() => {
       void refreshExportJob(jobId).catch((error) => {
-        setLog(`Export poll failed: ${String(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        setExportValidationMessage(`Export status check failed: ${message}`);
+        setLog(`Export poll failed: ${message}`);
       });
     }, 1000);
   };
 
+  const canStartExport = () => {
+    const hasAssets = project.assets.some((asset) => asset.kind === "video");
+    const hasTimelineClips = project.timeline.tracks.some((track) => track.clips.length > 0);
+    return hasAssets && hasTimelineClips;
+  };
+
   const createExportJob = async () => {
+    if (!canStartExport()) {
+      setExportValidationMessage("Add at least one video clip to the timeline before exporting.");
+      setLog("Export blocked: no timeline clip.");
+      return;
+    }
+
+    setExportValidationMessage(null);
     setExportBusy(true);
     try {
       const normalized = normalizeProject(project);
@@ -1442,18 +1523,22 @@ export default function App() {
             fps: exportFps,
             format: "mp4",
           },
-          idempotencyKey: `${normalized.meta.projectId}:${normalized.meta.updatedAt}`,
+          idempotencyKey: `${normalized.meta.projectId}:${normalized.meta.updatedAt}:${exportPreset}:${exportFps}`,
         }),
       });
       if (!response.ok) {
         throw new Error(`Export submit failed (${response.status}).`);
       }
-      const payload = (await response.json()) as ExportJobState;
+      const payload = normalizeExportJobPayload((await response.json()) as ExportJobState);
       setExportJob(payload);
+      upsertExportHistory(payload);
+      persistExportSession(payload);
       beginExportPolling(payload.jobId);
       setLog(`Export job submitted: ${payload.jobId}`);
     } catch (error) {
-      setLog(`Export submit error: ${String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      setExportValidationMessage(`Export submit failed: ${message}`);
+      setLog(`Export submit error: ${message}`);
     } finally {
       setExportBusy(false);
     }
@@ -1472,7 +1557,9 @@ export default function App() {
       await refreshExportJob(exportJob.jobId);
       setLog(`Export job canceled: ${exportJob.jobId}`);
     } catch (error) {
-      setLog(`Export cancel error: ${String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      setExportValidationMessage(`Cancel failed: ${message}`);
+      setLog(`Export cancel error: ${message}`);
     } finally {
       setExportBusy(false);
     }
@@ -1480,6 +1567,7 @@ export default function App() {
 
   const retryExportJob = async () => {
     if (!exportJob) return;
+    setExportValidationMessage(null);
     setExportBusy(true);
     try {
       const response = await fetch(`${renderWorkerBaseUrl}/api/render/jobs/retry`, {
@@ -1490,11 +1578,14 @@ export default function App() {
       if (!response.ok) {
         throw new Error(`Retry failed (${response.status}).`);
       }
-      await refreshExportJob(exportJob.jobId);
+      const payload = await refreshExportJob(exportJob.jobId);
+      persistExportSession(payload);
       beginExportPolling(exportJob.jobId);
       setLog(`Export job retried: ${exportJob.jobId}`);
     } catch (error) {
-      setLog(`Export retry error: ${String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      setExportValidationMessage(`Retry failed: ${message}`);
+      setLog(`Export retry error: ${message}`);
     } finally {
       setExportBusy(false);
     }
@@ -1909,6 +2000,38 @@ export default function App() {
   }, [collisionMode, mainTrackMagnet]);
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(EXPORT_SESSION_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        jobId?: string;
+        preset?: ExportPreset;
+        fps?: ExportFps;
+      };
+      if (parsed.preset === "720p" || parsed.preset === "1080p") {
+        setExportPreset(parsed.preset);
+      }
+      if (parsed.fps === 24 || parsed.fps === 30 || parsed.fps === 60) {
+        setExportFps(parsed.fps);
+      }
+      if (!parsed.jobId) return;
+      void refreshExportJob(parsed.jobId)
+        .then((job) => {
+          if (job.status === "queued" || job.status === "running") {
+            beginExportPolling(job.jobId);
+            setLog(`Resumed export job: ${job.jobId}`);
+          }
+        })
+        .catch(() => {
+          persistExportSession(null);
+        });
+    } catch {
+      // Ignore restore errors.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     return () => {
       clearExportPolling();
     };
@@ -2248,6 +2371,7 @@ export default function App() {
     });
 
     setLog(`Added ${asset.name ?? assetId} to timeline.`);
+    setExportValidationMessage(null);
   };
 
   const onPreviewMetadataLoaded = (durationMs: number, width: number, height: number) => {
@@ -2283,6 +2407,7 @@ export default function App() {
 
   const timelineStatus = `Ready | Selected: ${selectedClipCount} | Ripple: ${rippleMode}`;
   const diagnosticsEnabled = devMode && diagnosticsVisible;
+  const exportCanStart = canStartExport();
 
   return (
     <>
@@ -2293,7 +2418,10 @@ export default function App() {
             onProjectNameChange={setProjectName}
             onUndo={undo}
             onRedo={redo}
-            onExport={() => setExportOpen(true)}
+            onExport={() => {
+              setExportValidationMessage(exportCanStart ? null : "Add at least one video clip to the timeline.");
+              setExportOpen(true);
+            }}
             onSave={saveProject}
             onLoad={loadProject}
             onOpenAbout={() => setAboutOpen(true)}
@@ -2430,6 +2558,9 @@ export default function App() {
         open={exportOpen}
         busy={exportBusy}
         job={exportJob}
+        history={exportHistory}
+        canStart={exportCanStart}
+        validationMessage={exportValidationMessage}
         preset={exportPreset}
         fps={exportFps}
         onPresetChange={setExportPreset}
