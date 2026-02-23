@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-23T13:56:57.598Z",
+  "generatedAt": "2026-02-23T14:12:55.206Z",
   "appUrl": "http://127.0.0.1:4174",
   "scenarioCount": 50,
   "thresholds": {
@@ -19,7 +19,7 @@
       "profile": "baseline-short-gop",
       "mediaFilename": "qa_h264_baseline_short_gop_aac.mp4",
       "mediaPath": "poc/editor-web/.qa-media/qa_h264_baseline_short_gop_aac.mp4",
-      "runAt": "2026-02-23T13:56:52.421Z",
+      "runAt": "2026-02-23T14:12:50.053Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -29,10 +29,10 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T13:56:52.415Z",
+        "runAt": "2026-02-23T14:12:50.047Z",
         "profile": "baseline-short-gop",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 7.593877549682345,
+        "time_to_first_frame_ms": 7.612244899783816,
         "seek_success_pct": 98,
         "decode_errors": 0,
         "stale_results": 1,
@@ -56,7 +56,7 @@
           "timestampUs": 458333,
           "status": "ok",
           "fromCache": false,
-          "decodeMs": 3.699999988079071,
+          "decodeMs": 3.800000011920929,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": 0,
           "reason": "qa"
@@ -82,7 +82,7 @@
       "profile": "main-long-gop",
       "mediaFilename": "qa_h264_main_long_gop_aac.mp4",
       "mediaPath": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
-      "runAt": "2026-02-23T13:56:54.513Z",
+      "runAt": "2026-02-23T14:12:52.146Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -92,10 +92,10 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T13:56:54.510Z",
+        "runAt": "2026-02-23T14:12:52.142Z",
         "profile": "main-long-gop",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 28.793877548709208,
+        "time_to_first_frame_ms": 28.818367348033554,
         "seek_success_pct": 98,
         "decode_errors": 0,
         "stale_results": 1,
@@ -119,7 +119,7 @@
           "timestampUs": 2833333,
           "status": "ok",
           "fromCache": false,
-          "decodeMs": 23.69999998807907,
+          "decodeMs": 24.599999994039536,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": 83333,
           "reason": "qa"
@@ -145,7 +145,7 @@
       "profile": "high-long-gop",
       "mediaFilename": "qa_h264_high_long_gop_aac.mp4",
       "mediaPath": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
-      "runAt": "2026-02-23T13:56:56.595Z",
+      "runAt": "2026-02-23T14:12:54.220Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -155,10 +155,10 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T13:56:56.592Z",
+        "runAt": "2026-02-23T14:12:54.217Z",
         "profile": "high-long-gop",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 28.630612241978547,
+        "time_to_first_frame_ms": 28.45510203984319,
         "seek_success_pct": 98,
         "decode_errors": 0,
         "stale_results": 1,
@@ -182,7 +182,7 @@
           "timestampUs": 5625000,
           "status": "ok",
           "fromCache": false,
-          "decodeMs": 13.5,
+          "decodeMs": 14.199999988079071,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": 5083333,
           "reason": "qa"
@@ -208,7 +208,7 @@
       "profile": "no-audio",
       "mediaFilename": "chromium_bear_silent.mp4",
       "mediaPath": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
-      "runAt": "2026-02-23T13:56:57.359Z",
+      "runAt": "2026-02-23T14:12:54.970Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -218,10 +218,10 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T13:56:57.355Z",
+        "runAt": "2026-02-23T14:12:54.966Z",
         "profile": "no-audio",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 1.95,
+        "time_to_first_frame_ms": 1.6760000002384186,
         "seek_success_pct": 100,
         "decode_errors": 0,
         "stale_results": 0,
@@ -271,7 +271,7 @@
       "profile": "fmp4",
       "mediaFilename": "chromium_bear_640x360_av_frag_fmp4.mp4",
       "mediaPath": "poc/editor-web/.qa-media/chromium_bear_640x360_av_frag_fmp4.mp4",
-      "runAt": "2026-02-23T13:56:57.597Z",
+      "runAt": "2026-02-23T14:12:55.205Z",
       "status": "skipped-fmp4-fallback-policy",
       "pass": true,
       "thresholds": {
