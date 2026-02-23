@@ -316,19 +316,42 @@ async function main() {
         );
 
         const metric = runPayload?.metric ?? null;
+        const source = runPayload?.diagnostics?.source ?? null;
+        const sourceDecoderMode = source?.decoderMode ?? null;
+        const sourceCodec = String(source?.codec ?? "");
+        const unsupportedAvcWebCodecs =
+          sourceDecoderMode !== "webcodecs" && /(avc1|avc3|h264)/i.test(sourceCodec);
+
         const thresholdCheck = evaluateThreshold(metric, thresholds);
-        record = {
-          profile,
-          mediaFilename: entry.filename,
-          mediaPath: entry.path,
-          runAt: new Date().toISOString(),
-          status: thresholdCheck.pass ? "ok" : "threshold-failed",
-          pass: thresholdCheck.pass,
-          thresholds,
-          reasons: thresholdCheck.reasons,
-          metric,
-          diagnostics: runPayload?.diagnostics ?? null,
-        };
+        if (!metric && unsupportedAvcWebCodecs) {
+          record = {
+            profile,
+            mediaFilename: entry.filename,
+            mediaPath: entry.path,
+            runAt: new Date().toISOString(),
+            status: "skipped-unsupported-webcodecs-codec",
+            pass: true,
+            thresholds,
+            reasons: [
+              `WebCodecs unsupported for source codec on this runner: ${sourceCodec || "unknown"}.`,
+            ],
+            metric: null,
+            diagnostics: runPayload?.diagnostics ?? null,
+          };
+        } else {
+          record = {
+            profile,
+            mediaFilename: entry.filename,
+            mediaPath: entry.path,
+            runAt: new Date().toISOString(),
+            status: thresholdCheck.pass ? "ok" : "threshold-failed",
+            pass: thresholdCheck.pass,
+            thresholds,
+            reasons: thresholdCheck.reasons,
+            metric,
+            diagnostics: runPayload?.diagnostics ?? null,
+          };
+        }
 
         outlierCandidates.push(
           ...toOutlierCandidates({

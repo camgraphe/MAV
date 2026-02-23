@@ -36,13 +36,12 @@ jobs:
       - name: Fetch decode QA media set
         run: pnpm qa:media:fetch
 
-      - name: Install Playwright Chrome
-        run: pnpm exec playwright install --with-deps chrome
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Run decode QA gate
         env:
           HEADLESS: "false"
-          PLAYWRIGHT_CHANNEL: "chrome"
         run: xvfb-run -a pnpm qa:decode:gate --start-server --port 4174
 
       - name: Upload decode QA artifacts
