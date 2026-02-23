@@ -322,6 +322,41 @@ select {
   gap: 8px;
 }
 
+.aiStatusRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.aiStatusTag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid #35516f;
+  background: #1d2c40;
+  color: #dcecff;
+}
+
+.aiStatusTag.status-running {
+  border-color: #4f8fcc;
+  color: #9ed4ff;
+}
+
+.aiStatusTag.status-completed {
+  border-color: #4fa07b;
+  color: #a9f0cf;
+}
+
+.aiStatusTag.status-failed {
+  border-color: #b06262;
+  color: #ffb4b4;
+}
+
 .mediaUpload {
   display: grid;
   gap: 6px;
