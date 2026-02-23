@@ -46,3 +46,9 @@ Store outputs in CI artifacts with image digest and release identifier.
 - retries with capped backoff
 - cancel support
 - progress reporting every N frames/segments
+
+
+## PoC implementation note
+- Current PoC render-worker executes real FFmpeg jobs and serves downloadable MP4 outputs via `/api/render/jobs/:jobId/output`.
+- Current encoder path may use non-final PoC codecs (`mpeg4` + `aac`) to maximize local portability.
+- Production target remains MP4 H.264/AAC under the LGPL-only build policy defined above.

@@ -287,6 +287,17 @@ function quantize(value: number, step: number): number {
   return Math.round(value / step) * step;
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName.toLowerCase();
@@ -1692,17 +1703,37 @@ export default function App() {
     setExportBusy(true);
     try {
       const normalized = normalizeProject(project);
+      const referencedAssetIds = new Set(
+        normalized.timeline.tracks.flatMap((track) => track.clips.map((clip) => clip.assetId)),
+      );
       const assetUrls = normalized.assets.map((asset) =>
         asset.url.startsWith("http://") || asset.url.startsWith("https://")
           ? asset.url
           : `https://local.mav.invalid/assets/${asset.id}`,
       );
+      const assetPayloads = (
+        await Promise.all(
+          normalized.assets.map(async (asset) => {
+            if (!referencedAssetIds.has(asset.id)) return null;
+            const file = assetFilesRef.current.get(asset.id);
+            if (!file) return null;
+            const base64Data = arrayBufferToBase64(await file.arrayBuffer());
+            return {
+              assetId: asset.id,
+              filename: file.name,
+              mimeType: file.type || undefined,
+              base64Data,
+            };
+          }),
+        )
+      ).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
       const response = await fetch(`${renderWorkerBaseUrl}/api/render/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectJson: normalized,
           assetUrls,
+          assetPayloads,
           preset: "mp4-h264-aac",
           renderOptions: {
             preset: exportPreset,
