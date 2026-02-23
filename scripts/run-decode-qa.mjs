@@ -194,6 +194,13 @@ async function main() {
     const page = await context.newPage();
     page.setDefaultTimeout(120_000);
 
+    // Warm-up navigation to absorb Vite dependency optimization reloads in fresh CI runners.
+    await retry(async () => {
+      await page.goto(appUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForFunction(() => Boolean(window.__MAV_DECODE_QA__));
+      await sleep(1200);
+    }, 2);
+
     const outputs = [];
     const outlierCandidates = [];
 
@@ -215,6 +222,7 @@ async function main() {
       await retry(async () => {
         await page.goto(appUrl, { waitUntil: "domcontentloaded" });
         await page.waitForFunction(() => Boolean(window.__MAV_DECODE_QA__));
+        await sleep(200);
       }, 1);
 
       await retry(async () => {
@@ -226,7 +234,10 @@ async function main() {
         });
       }, 1);
 
-      const state = await page.evaluate(() => window.__MAV_DECODE_QA__?.getState() ?? null);
+      const state = await retry(
+        () => page.evaluate(() => window.__MAV_DECODE_QA__?.getState() ?? null),
+        2,
+      );
       let record;
 
       if (profile === "fmp4" || state?.isFmp4Source) {
