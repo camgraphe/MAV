@@ -1,0 +1,59 @@
+{
+  "profile": "main-long-gop",
+  "mediaFilename": "qa_h264_main_long_gop_aac.mp4",
+  "mediaPath": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
+  "runAt": "2026-02-23T12:49:19.255Z",
+  "status": "threshold-failed",
+  "pass": false,
+  "thresholds": {
+    "seek_success_pct": 98,
+    "drift_within_1frame_pct": 95,
+    "decode_errors": 0
+  },
+  "reasons": [
+    "seek_success_pct=76.00 < 98",
+    "drift_within_1frame_pct=89.47 < 95",
+    "decode_errors=8 != 0"
+  ],
+  "metric": {
+    "runAt": "2026-02-23T12:49:19.254Z",
+    "profile": "main-long-gop",
+    "totalScenarios": 50,
+    "time_to_first_frame_ms": 25.778947369832743,
+    "seek_success_pct": 76,
+    "decode_errors": 8,
+    "stale_results": 4,
+    "drift_within_1frame_pct": 89.47368421052632,
+    "avg_drift_ms": 42.17189473684211,
+    "max_drift_ms": 446.836
+  },
+  "diagnostics": {
+    "decoderErrors": [],
+    "decoderErrorBuckets": [],
+    "lastSeekResult": {
+      "type": "seekResult",
+      "requestId": 51,
+      "targetUs": 7568743,
+      "timestampUs": 7583333,
+      "status": "ok",
+      "fromCache": false,
+      "decodeMs": 35.39999997615814,
+      "skippedToIdrSamples": 0,
+      "reason": "qa"
+    },
+    "idrSkipStats": {
+      "totalSkips": 0,
+      "maxSkips": 0,
+      "seekWithSkips": 0
+    },
+    "source": {
+      "decoderMode": "webcodecs",
+      "isFmp4Source": false,
+      "codec": "avc1.4d401f",
+      "codedWidth": 854,
+      "codedHeight": 480,
+      "descriptionLength": 40,
+      "timestampAuditIssueCount": 107
+    }
+  }
+}

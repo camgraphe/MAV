@@ -1,0 +1,30 @@
+{
+  "profile": "no-audio",
+  "mediaFilename": "chromium_bear_silent.mp4",
+  "mediaPath": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+  "runAt": "2026-02-23T12:34:51.935Z",
+  "status": "threshold-failed",
+  "pass": false,
+  "thresholds": {
+    "seek_success_pct": 98,
+    "drift_within_1frame_pct": 95,
+    "decode_errors": 0
+  },
+  "reasons": [
+    "seek_success_pct=86.00 < 98",
+    "drift_within_1frame_pct=37.21 < 95",
+    "decode_errors=5 != 0"
+  ],
+  "metric": {
+    "runAt": "2026-02-23T12:34:51.935Z",
+    "profile": "no-audio",
+    "totalScenarios": 50,
+    "time_to_first_frame_ms": 0.49767442012942115,
+    "seek_success_pct": 86,
+    "decode_errors": 5,
+    "stale_results": 2,
+    "drift_within_1frame_pct": 37.2093023255814,
+    "avg_drift_ms": 180.81065116279072,
+    "max_drift_ms": 489.214
+  }
+}

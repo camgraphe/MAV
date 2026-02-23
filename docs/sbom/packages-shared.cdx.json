@@ -1,0 +1,138 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:c51446d2-7bad-4041-80f8-5e1d80bc69d8",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-02-23T12:01:44Z",
+    "tools": {
+      "components": [
+        {
+          "group": "@cyclonedx",
+          "name": "cdxgen",
+          "version": "12.1.0",
+          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.1.0",
+          "type": "application",
+          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.1.0",
+          "publisher": "OWASP Foundation",
+          "authors": [
+            {
+              "name": "OWASP Foundation"
+            }
+          ]
+        }
+      ]
+    },
+    "authors": [
+      {
+        "name": "OWASP Foundation"
+      }
+    ],
+    "lifecycles": [
+      {
+        "phase": "pre-build"
+      }
+    ],
+    "component": {
+      "name": "shared",
+      "group": "@mav",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40mav/shared@0.1.0",
+      "bom-ref": "pkg:npm/@mav/shared@0.1.0",
+      "type": "application"
+    },
+    "properties": [
+      {
+        "name": "cdx:bom:componentTypes",
+        "value": "npm"
+      },
+      {
+        "name": "cdx:bom:componentSrcFiles",
+        "value": "packages/shared/node_modules/typescript/package.json"
+      }
+    ]
+  },
+  "components": [
+    {
+      "authors": [
+        {
+          "name": "Microsoft Corp."
+        }
+      ],
+      "group": "",
+      "name": "typescript",
+      "version": "5.9.3",
+      "description": "TypeScript is a language for application scale JavaScript development",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://opensource.org/licenses/Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:npm/typescript@5.9.3",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://www.typescriptlang.org/"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/microsoft/TypeScript.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/typescript@5.9.3",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "packages/shared/node_modules/typescript/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "packages/shared/node_modules/typescript/package.json"
+              }
+            ],
+            "concludedValue": "packages/shared/node_modules/typescript/package.json"
+          }
+        ]
+      }
+    }
+  ],
+  "dependencies": [],
+  "annotations": [
+    {
+      "bom-ref": "metadata-annotations",
+      "subjects": [
+        "pkg:npm/@mav/shared@0.1.0"
+      ],
+      "annotator": {
+        "component": {
+          "group": "@cyclonedx",
+          "name": "cdxgen",
+          "version": "12.1.0",
+          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.1.0",
+          "type": "application",
+          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.1.0",
+          "publisher": "OWASP Foundation",
+          "authors": [
+            {
+              "name": "OWASP Foundation"
+            }
+          ]
+        }
+      },
+      "timestamp": "2026-02-23T12:01:44Z",
+      "text": "This Software Bill-of-Materials (SBOM) document was created on Monday, February 23, 2026 with cdxgen. The data was captured during the pre-build lifecycle phase without building the application. The document describes an application named 'shared' with version '0.1.0'. There are 1 components."
+    }
+  ]
+}

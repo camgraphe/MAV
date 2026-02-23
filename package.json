@@ -1,0 +1,28 @@
+{
+  "name": "mav",
+  "private": true,
+  "version": "0.1.0",
+  "description": "MAV - MVP montage video connecte a maxvideoai.com",
+  "packageManager": "pnpm@10.18.2",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter @mav/api dev",
+    "dev:desktop": "pnpm --filter @mav/desktop dev",
+    "dev:poc:web": "pnpm --filter @mav/poc-editor-web dev",
+    "dev:poc:render": "pnpm --filter @mav/poc-render-worker dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "license:check": "node scripts/check-licenses.mjs",
+    "license:report": "node scripts/check-licenses.mjs --report",
+    "deps:report": "node scripts/generate-dependency-report.mjs",
+    "sbom:generate": "node scripts/generate-sbom.mjs",
+    "qa:media:fetch": "node scripts/fetch-qa-media.mjs",
+    "qa:decode": "node scripts/run-decode-qa.mjs",
+    "qa:decode:gate": "node scripts/run-decode-qa.mjs --enforce-thresholds"
+  },
+  "devDependencies": {
+    "@cyclonedx/cdxgen": "^12.1.0",
+    "license-checker-rseidelsohn": "^4.4.2",
+    "playwright": "^1.54.2"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "profile": "baseline-short-gop",
+  "mediaFilename": "qa_h264_baseline_short_gop_aac.mp4",
+  "mediaPath": "poc/editor-web/.qa-media/qa_h264_baseline_short_gop_aac.mp4",
+  "runAt": "2026-02-23T12:56:59.576Z",
+  "status": "ok",
+  "pass": true,
+  "thresholds": {
+    "seek_success_pct": 98,
+    "drift_within_1frame_pct": 95,
+    "decode_errors": 0
+  },
+  "reasons": [],
+  "metric": {
+    "runAt": "2026-02-23T12:56:59.574Z",
+    "profile": "baseline-short-gop",
+    "totalScenarios": 50,
+    "time_to_first_frame_ms": 8.655102043735738,
+    "seek_success_pct": 98,
+    "decode_errors": 0,
+    "stale_results": 1,
+    "drift_within_1frame_pct": 100,
+    "avg_drift_ms": 8.352714285714288,
+    "max_drift_ms": 19.968
+  },
+  "diagnostics": {
+    "decoderErrors": [],
+    "decoderErrorBuckets": [],
+    "seekErrors": [],
+    "seekErrorBuckets": [],
+    "requestStats": {
+      "evaluatedScenarios": 50,
+      "totalSeekRequests": 62
+    },
+    "lastSeekResult": {
+      "type": "seekResult",
+      "requestId": 63,
+      "targetUs": 9130175,
+      "timestampUs": 9125000,
+      "status": "ok",
+      "fromCache": false,
+      "decodeMs": 10.100000023841858,
+      "skippedToIdrSamples": 0,
+      "reason": "qa"
+    },
+    "idrSkipStats": {
+      "totalSkips": 0,
+      "maxSkips": 0,
+      "seekWithSkips": 0
+    },
+    "source": {
+      "decoderMode": "webcodecs",
+      "isFmp4Source": false,
+      "codec": "avc1.42c01e",
+      "codedWidth": 854,
+      "codedHeight": 480,
+      "descriptionLength": 41,
+      "timestampAuditIssueCount": 0
+    }
+  }
+}

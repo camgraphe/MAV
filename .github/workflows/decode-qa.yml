@@ -1,0 +1,54 @@
+name: Decode QA Gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "poc/editor-web/**"
+      - "scripts/fetch-qa-media.mjs"
+      - "scripts/run-decode-qa.mjs"
+      - ".github/workflows/decode-qa.yml"
+
+jobs:
+  decode-qa:
+    name: decode-qa
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch decode QA media set
+        run: pnpm qa:media:fetch
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run decode QA gate
+        env:
+          HEADLESS: "false"
+        run: xvfb-run -a pnpm qa:decode:gate --start-server --port 4174
+
+      - name: Upload decode QA artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: decode-qa-baselines
+          path: |
+            docs/qa/baselines/latest-summary.json
+            docs/qa/baselines/*.baseline.json
+            docs/qa/baselines/history/*.outliers.json

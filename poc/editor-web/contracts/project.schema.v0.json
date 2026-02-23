@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mav.local/schemas/project.v0.json",
+  "title": "MAV Project v0",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "meta",
+    "timeline",
+    "assets"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "mav.project.v0"
+    },
+    "meta": {
+      "type": "object",
+      "required": ["projectId", "createdAt", "updatedAt", "fps", "width", "height"],
+      "properties": {
+        "projectId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "fps": { "type": "number", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 16 },
+        "height": { "type": "integer", "minimum": 16 }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "url"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["video", "audio", "image"] },
+          "url": { "type": "string" },
+          "durationMs": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "required": ["durationMs", "tracks"],
+      "properties": {
+        "durationMs": { "type": "number", "minimum": 0 },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "clips"],
+            "properties": {
+              "id": { "type": "string" },
+              "kind": { "enum": ["video", "overlay", "audio"] },
+              "clips": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "assetId",
+                    "startMs",
+                    "durationMs",
+                    "inMs",
+                    "outMs"
+                  ],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "assetId": { "type": "string" },
+                    "startMs": { "type": "number", "minimum": 0 },
+                    "durationMs": { "type": "number", "minimum": 0 },
+                    "inMs": { "type": "number", "minimum": 0 },
+                    "outMs": { "type": "number", "minimum": 0 },
+                    "volume": { "type": "number", "minimum": 0, "maximum": 2 },
+                    "transform": {
+                      "type": "object",
+                      "properties": {
+                        "x": { "type": "number" },
+                        "y": { "type": "number" },
+                        "scale": { "type": "number", "minimum": 0 },
+                        "rotation": { "type": "number" },
+                        "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

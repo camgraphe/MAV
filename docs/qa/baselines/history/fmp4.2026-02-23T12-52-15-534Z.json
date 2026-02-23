@@ -1,0 +1,18 @@
+{
+  "profile": "fmp4",
+  "mediaFilename": "chromium_bear_640x360_av_frag_fmp4.mp4",
+  "mediaPath": "poc/editor-web/.qa-media/chromium_bear_640x360_av_frag_fmp4.mp4",
+  "runAt": "2026-02-23T12:52:15.534Z",
+  "status": "skipped-fmp4-fallback-policy",
+  "pass": true,
+  "thresholds": {
+    "seek_success_pct": 98,
+    "drift_within_1frame_pct": 95,
+    "decode_errors": 0
+  },
+  "reasons": [
+    "fMP4 policy active: fallback HTMLVideo preview path (no WebCodecs QA run)."
+  ],
+  "metric": null,
+  "diagnostics": null
+}

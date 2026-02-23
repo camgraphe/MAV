@@ -1,0 +1,93 @@
+{
+  "profile": "no-audio",
+  "mediaFilename": "chromium_bear_silent.mp4",
+  "mediaPath": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+  "runAt": "2026-02-23T12:52:15.463Z",
+  "status": "threshold-failed",
+  "pass": false,
+  "thresholds": {
+    "seek_success_pct": 98,
+    "drift_within_1frame_pct": 95,
+    "decode_errors": 0
+  },
+  "reasons": [
+    "seek_success_pct=92.00 < 98",
+    "drift_within_1frame_pct=45.65 < 95",
+    "decode_errors=3 != 0"
+  ],
+  "metric": {
+    "runAt": "2026-02-23T12:52:15.462Z",
+    "profile": "no-audio",
+    "totalScenarios": 50,
+    "time_to_first_frame_ms": 0.6369565232940342,
+    "seek_success_pct": 92,
+    "decode_errors": 3,
+    "stale_results": 1,
+    "drift_within_1frame_pct": 45.65217391304348,
+    "avg_drift_ms": 129.3102608695652,
+    "max_drift_ms": 479.885
+  },
+  "diagnostics": {
+    "decoderErrors": [],
+    "decoderErrorBuckets": [],
+    "seekErrors": [
+      {
+        "requestId": -1,
+        "targetUs": 26662,
+        "message": "Error: Seek timeout for request 33.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 837845,
+        "message": "Error: Seek timeout for request 34.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 317420,
+        "message": "Error: Seek timeout for request 35.",
+        "skippedToIdrSamples": 0
+      }
+    ],
+    "seekErrorBuckets": [
+      {
+        "key": "Error: Seek timeout for request 33.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 34.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 35.",
+        "count": 1
+      }
+    ],
+    "lastSeekResult": {
+      "type": "seekResult",
+      "requestId": 51,
+      "targetUs": 253577,
+      "timestampUs": 266933,
+      "status": "ok",
+      "fromCache": true,
+      "decodeMs": 0,
+      "skippedToIdrSamples": 0,
+      "reason": "qa"
+    },
+    "idrSkipStats": {
+      "totalSkips": 0,
+      "maxSkips": 0,
+      "seekWithSkips": 0
+    },
+    "source": {
+      "decoderMode": "webcodecs",
+      "isFmp4Source": false,
+      "codec": "avc1.64000d",
+      "codedWidth": 320,
+      "codedHeight": 180,
+      "descriptionLength": 40,
+      "timestampAuditIssueCount": 14
+    }
+  }
+}

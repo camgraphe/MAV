@@ -1,0 +1,350 @@
+{
+  "runId": "2026-02-23T13-02-53-525Z",
+  "generatedAt": "2026-02-23T13:02:53.525Z",
+  "appUrl": "http://127.0.0.1:4174",
+  "scenarioCount": 50,
+  "totalCandidates": 197,
+  "topCount": 20,
+  "outliers": [
+    {
+      "scenarioId": "main-long-gop-1",
+      "targetUs": 0,
+      "decodedUs": 83333,
+      "driftUs": 83333,
+      "driftFrames": 1.9999760001919984,
+      "profile": "main-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 83333,
+      "config": {
+        "codec": "avc1.4d401f",
+        "codedWxH": "854x480",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "high-long-gop-1",
+      "targetUs": 0,
+      "decodedUs": 83333,
+      "driftUs": 83333,
+      "driftFrames": 1.9999760001919984,
+      "profile": "high-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 83333,
+      "config": {
+        "codec": "avc1.64001f",
+        "codedWxH": "854x480",
+        "avcCLen": 47
+      }
+    },
+    {
+      "scenarioId": "main-long-gop-2",
+      "targetUs": 33333,
+      "decodedUs": 83333,
+      "driftUs": 50000,
+      "driftFrames": 1.1999904000767994,
+      "profile": "main-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 83333,
+      "config": {
+        "codec": "avc1.4d401f",
+        "codedWxH": "854x480",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "high-long-gop-2",
+      "targetUs": 33333,
+      "decodedUs": 83333,
+      "driftUs": 50000,
+      "driftFrames": 1.1999904000767994,
+      "profile": "high-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 83333,
+      "config": {
+        "codec": "avc1.64001f",
+        "codedWxH": "854x480",
+        "avcCLen": 47
+      }
+    },
+    {
+      "scenarioId": "no-audio-1",
+      "targetUs": 0,
+      "decodedUs": 33367,
+      "driftUs": 33367,
+      "driftFrames": 1,
+      "profile": "no-audio",
+      "path": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 33367,
+      "config": {
+        "codec": "avc1.64000d",
+        "codedWxH": "320x180",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "no-audio-44",
+      "targetUs": 101311,
+      "decodedUs": 133467,
+      "driftUs": 32156,
+      "driftFrames": 0.9637066562771601,
+      "profile": "no-audio",
+      "path": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+      "cacheHit": true,
+      "idrSkipCount": 0,
+      "keyframeStartUs": null,
+      "config": {
+        "codec": "avc1.64000d",
+        "codedWxH": "320x180",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "baseline-short-gop-12",
+      "targetUs": 5793192,
+      "decodedUs": 5833333,
+      "driftUs": 40141,
+      "driftFrames": 0.9633762929896561,
+      "profile": "baseline-short-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_baseline_short_gop_aac.mp4",
+      "cacheHit": true,
+      "idrSkipCount": 0,
+      "keyframeStartUs": null,
+      "config": {
+        "codec": "avc1.42c01e",
+        "codedWxH": "854x480",
+        "avcCLen": 41
+      }
+    },
+    {
+      "scenarioId": "no-audio-34",
+      "targetUs": 705728,
+      "decodedUs": 734067,
+      "driftUs": 28339,
+      "driftFrames": 0.8493121946833698,
+      "profile": "no-audio",
+      "path": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+      "cacheHit": true,
+      "idrSkipCount": 0,
+      "keyframeStartUs": null,
+      "config": {
+        "codec": "avc1.64000d",
+        "codedWxH": "320x180",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "high-long-gop-33",
+      "targetUs": 2012988,
+      "decodedUs": 2041667,
+      "driftUs": 28679,
+      "driftFrames": 0.6882904936760506,
+      "profile": "high-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
+      "cacheHit": true,
+      "idrSkipCount": 0,
+      "keyframeStartUs": null,
+      "config": {
+        "codec": "avc1.64001f",
+        "codedWxH": "854x480",
+        "avcCLen": 47
+      }
+    },
+    {
+      "scenarioId": "no-audio-16",
+      "targetUs": 921163,
+      "decodedUs": 900900,
+      "driftUs": -20263,
+      "driftFrames": -0.6072766505829112,
+      "profile": "no-audio",
+      "path": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+      "cacheHit": true,
+      "idrSkipCount": 0,
+      "keyframeStartUs": null,
+      "config": {
+        "codec": "avc1.64000d",
+        "codedWxH": "320x180",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "main-long-gop-5",
+      "targetUs": 5020834,
+      "decodedUs": 5041667,
+      "driftUs": 20833,
+      "driftFrames": 0.49998800009599925,
+      "profile": "main-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 83333,
+      "config": {
+        "codec": "avc1.4d401f",
+        "codedWxH": "854x480",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "high-long-gop-5",
+      "targetUs": 5020834,
+      "decodedUs": 5041667,
+      "driftUs": 20833,
+      "driftFrames": 0.49998800009599925,
+      "profile": "high-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 83333,
+      "config": {
+        "codec": "avc1.64001f",
+        "codedWxH": "854x480",
+        "avcCLen": 47
+      }
+    },
+    {
+      "scenarioId": "no-audio-5",
+      "targetUs": 517184,
+      "decodedUs": 533867,
+      "driftUs": 16683,
+      "driftFrames": 0.49998501513471394,
+      "profile": "no-audio",
+      "path": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 33367,
+      "config": {
+        "codec": "avc1.64000d",
+        "codedWxH": "320x180",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "main-long-gop-27",
+      "targetUs": 9770739,
+      "decodedUs": 9750000,
+      "driftUs": -20739,
+      "driftFrames": -0.49773201814385487,
+      "profile": "main-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 5083333,
+      "config": {
+        "codec": "avc1.4d401f",
+        "codedWxH": "854x480",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "no-audio-17",
+      "targetUs": 50401,
+      "decodedUs": 66733,
+      "driftUs": 16332,
+      "driftFrames": 0.48946563970389906,
+      "profile": "no-audio",
+      "path": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 33367,
+      "config": {
+        "codec": "avc1.64000d",
+        "codedWxH": "320x180",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "main-long-gop-46",
+      "targetUs": 2603558,
+      "decodedUs": 2583333,
+      "driftUs": -20225,
+      "driftFrames": -0.48539611683106537,
+      "profile": "main-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 83333,
+      "config": {
+        "codec": "avc1.4d401f",
+        "codedWxH": "854x480",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "main-long-gop-26",
+      "targetUs": 2771605,
+      "decodedUs": 2791667,
+      "driftUs": 20062,
+      "driftFrames": 0.481484148126815,
+      "profile": "main-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
+      "cacheHit": true,
+      "idrSkipCount": 0,
+      "keyframeStartUs": null,
+      "config": {
+        "codec": "avc1.4d401f",
+        "codedWxH": "854x480",
+        "avcCLen": 40
+      }
+    },
+    {
+      "scenarioId": "high-long-gop-11",
+      "targetUs": 1813272,
+      "decodedUs": 1833333,
+      "driftUs": 20061,
+      "driftFrames": 0.48146014831881345,
+      "profile": "high-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 83333,
+      "config": {
+        "codec": "avc1.64001f",
+        "codedWxH": "854x480",
+        "avcCLen": 47
+      }
+    },
+    {
+      "scenarioId": "high-long-gop-40",
+      "targetUs": 769621,
+      "decodedUs": 750000,
+      "driftUs": -19621,
+      "driftFrames": -0.47090023279813764,
+      "profile": "high-long-gop",
+      "path": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
+      "cacheHit": false,
+      "idrSkipCount": 0,
+      "keyframeStartUs": 83333,
+      "config": {
+        "codec": "avc1.64001f",
+        "codedWxH": "854x480",
+        "avcCLen": 47
+      }
+    },
+    {
+      "scenarioId": "no-audio-45",
+      "targetUs": 149147,
+      "decodedUs": 133467,
+      "driftUs": -15680,
+      "driftFrames": -0.4699253753708754,
+      "profile": "no-audio",
+      "path": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+      "cacheHit": true,
+      "idrSkipCount": 0,
+      "keyframeStartUs": null,
+      "config": {
+        "codec": "avc1.64000d",
+        "codedWxH": "320x180",
+        "avcCLen": 40
+      }
+    }
+  ]
+}

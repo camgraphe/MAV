@@ -1,0 +1,30 @@
+{
+  "profile": "baseline-short-gop",
+  "mediaFilename": "qa_h264_baseline_short_gop_aac.mp4",
+  "mediaPath": "poc/editor-web/.qa-media/qa_h264_baseline_short_gop_aac.mp4",
+  "runAt": "2026-02-23T12:33:44.779Z",
+  "status": "threshold-failed",
+  "pass": false,
+  "thresholds": {
+    "seek_success_pct": 98,
+    "drift_within_1frame_pct": 95,
+    "decode_errors": 0
+  },
+  "reasons": [
+    "seek_success_pct=76.00 < 98",
+    "drift_within_1frame_pct=92.11 < 95",
+    "decode_errors=8 != 0"
+  ],
+  "metric": {
+    "runAt": "2026-02-23T12:33:44.778Z",
+    "profile": "baseline-short-gop",
+    "totalScenarios": 50,
+    "time_to_first_frame_ms": 7.839473681230294,
+    "seek_success_pct": 76,
+    "decode_errors": 8,
+    "stale_results": 4,
+    "drift_within_1frame_pct": 92.10526315789474,
+    "avg_drift_ms": 39.82834210526316,
+    "max_drift_ms": 271.282
+  }
+}

@@ -1,0 +1,38 @@
+# Example reference Dockerfile for an LGPL-only FFmpeg build path.
+# This is a policy scaffold, not a production-hardened image.
+
+FROM debian:bookworm-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  build-essential pkg-config yasm nasm git ca-certificates \
+  libopus-dev libvpx-dev libvorbis-dev libmp3lame-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+WORKDIR /build/ffmpeg
+
+# LGPL-only guardrails:
+# - disable gpl
+# - disable nonfree
+# - do not enable libx264/libx265/libfdk-aac
+RUN ./configure \
+  --prefix=/opt/ffmpeg \
+  --disable-gpl \
+  --disable-nonfree \
+  --enable-shared \
+  --disable-static \
+  --enable-libopus \
+  --enable-libvpx \
+  --enable-libvorbis \
+  --enable-libmp3lame \
+  --extra-cflags="-O2" \
+  --extra-ldflags="-Wl,-rpath,/opt/ffmpeg/lib" \
+  && make -j"$(nproc)" \
+  && make install
+
+FROM debian:bookworm-slim
+COPY --from=builder /opt/ffmpeg /opt/ffmpeg
+ENV PATH="/opt/ffmpeg/bin:${PATH}"
+
+CMD ["ffmpeg", "-version"]

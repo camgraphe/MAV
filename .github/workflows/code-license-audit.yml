@@ -1,0 +1,57 @@
+name: Code License Audit
+
+on:
+  schedule:
+    - cron: "20 3 * * *"
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+jobs:
+  ort-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: ORT analyzer + reporter
+        uses: oss-review-toolkit/ort-ci-github-action@v1
+        with:
+          run: "analyzer,reporter,upload-results"
+
+  scancode-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ScanCode Toolkit
+        run: |
+          python -m pip install --upgrade pip
+          pip install scancode-toolkit
+
+      - name: Run ScanCode
+        run: |
+          mkdir -p audits/scancode
+          scancode \
+            --strip-root \
+            --license \
+            --copyright \
+            --package \
+            --json-pp audits/scancode/scancode.json \
+            --ignore "**/node_modules/**" \
+            --ignore "**/dist/**" \
+            --ignore "**/.git/**" \
+            .
+
+      - name: Upload ScanCode report
+        uses: actions/upload-artifact@v4
+        with:
+          name: scancode-report
+          path: audits/scancode/scancode.json

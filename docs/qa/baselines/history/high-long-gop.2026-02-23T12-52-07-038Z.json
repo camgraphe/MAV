@@ -1,0 +1,153 @@
+{
+  "profile": "high-long-gop",
+  "mediaFilename": "qa_h264_high_long_gop_aac.mp4",
+  "mediaPath": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
+  "runAt": "2026-02-23T12:52:07.038Z",
+  "status": "threshold-failed",
+  "pass": false,
+  "thresholds": {
+    "seek_success_pct": 98,
+    "drift_within_1frame_pct": 95,
+    "decode_errors": 0
+  },
+  "reasons": [
+    "seek_success_pct=74.00 < 98",
+    "drift_within_1frame_pct=89.19 < 95",
+    "decode_errors=9 != 0"
+  ],
+  "metric": {
+    "runAt": "2026-02-23T12:52:07.036Z",
+    "profile": "high-long-gop",
+    "totalScenarios": 50,
+    "time_to_first_frame_ms": 24.602702704635828,
+    "seek_success_pct": 74,
+    "decode_errors": 9,
+    "stale_results": 4,
+    "drift_within_1frame_pct": 89.1891891891892,
+    "avg_drift_ms": 27.674945945945943,
+    "max_drift_ms": 90.506
+  },
+  "diagnostics": {
+    "decoderErrors": [],
+    "decoderErrorBuckets": [],
+    "seekErrors": [
+      {
+        "requestId": -1,
+        "targetUs": 8027794,
+        "message": "Error: Seek timeout for request 18.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 560154,
+        "message": "Error: Seek timeout for request 19.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 2581015,
+        "message": "Error: Seek timeout for request 20.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 6905483,
+        "message": "Error: Seek timeout for request 33.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 319634,
+        "message": "Error: Seek timeout for request 34.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 5421413,
+        "message": "Error: Seek timeout for request 35.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 9029577,
+        "message": "Error: Seek timeout for request 48.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 7505702,
+        "message": "Error: Seek timeout for request 49.",
+        "skippedToIdrSamples": 0
+      },
+      {
+        "requestId": -1,
+        "targetUs": 6979456,
+        "message": "Error: Seek timeout for request 50.",
+        "skippedToIdrSamples": 0
+      }
+    ],
+    "seekErrorBuckets": [
+      {
+        "key": "Error: Seek timeout for request 18.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 19.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 20.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 33.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 34.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 35.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 48.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 49.",
+        "count": 1
+      },
+      {
+        "key": "Error: Seek timeout for request 50.",
+        "count": 1
+      }
+    ],
+    "lastSeekResult": {
+      "type": "seekResult",
+      "requestId": 51,
+      "targetUs": 9100306,
+      "timestampUs": 9125000,
+      "status": "ok",
+      "fromCache": false,
+      "decodeMs": 54.900000005960464,
+      "skippedToIdrSamples": 0,
+      "reason": "qa"
+    },
+    "idrSkipStats": {
+      "totalSkips": 0,
+      "maxSkips": 0,
+      "seekWithSkips": 0
+    },
+    "source": {
+      "decoderMode": "webcodecs",
+      "isFmp4Source": false,
+      "codec": "avc1.64001f",
+      "codedWidth": 854,
+      "codedHeight": 480,
+      "descriptionLength": 47,
+      "timestampAuditIssueCount": 107
+    }
+  }
+}

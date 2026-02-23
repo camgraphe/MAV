@@ -1,0 +1,59 @@
+{
+  "profile": "no-audio",
+  "mediaFilename": "chromium_bear_silent.mp4",
+  "mediaPath": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
+  "runAt": "2026-02-23T12:49:52.930Z",
+  "status": "threshold-failed",
+  "pass": false,
+  "thresholds": {
+    "seek_success_pct": 98,
+    "drift_within_1frame_pct": 95,
+    "decode_errors": 0
+  },
+  "reasons": [
+    "seek_success_pct=96.00 < 98",
+    "drift_within_1frame_pct=37.50 < 95",
+    "decode_errors=1 != 0"
+  ],
+  "metric": {
+    "runAt": "2026-02-23T12:49:52.929Z",
+    "profile": "no-audio",
+    "totalScenarios": 50,
+    "time_to_first_frame_ms": 0.6395833337058624,
+    "seek_success_pct": 96,
+    "decode_errors": 1,
+    "stale_results": 1,
+    "drift_within_1frame_pct": 37.5,
+    "avg_drift_ms": 140.85452083333334,
+    "max_drift_ms": 499.436
+  },
+  "diagnostics": {
+    "decoderErrors": [],
+    "decoderErrorBuckets": [],
+    "lastSeekResult": {
+      "type": "seekResult",
+      "requestId": 51,
+      "targetUs": 662242,
+      "timestampUs": 667333,
+      "status": "ok",
+      "fromCache": true,
+      "decodeMs": 0,
+      "skippedToIdrSamples": 0,
+      "reason": "qa"
+    },
+    "idrSkipStats": {
+      "totalSkips": 0,
+      "maxSkips": 0,
+      "seekWithSkips": 0
+    },
+    "source": {
+      "decoderMode": "webcodecs",
+      "isFmp4Source": false,
+      "codec": "avc1.64000d",
+      "codedWidth": 320,
+      "codedHeight": 180,
+      "descriptionLength": 40,
+      "timestampAuditIssueCount": 14
+    }
+  }
+}

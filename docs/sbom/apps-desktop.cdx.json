@@ -1,0 +1,576 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:f9370fc6-fd62-4203-82bc-bc41fd4f2af5",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-02-23T12:01:42Z",
+    "tools": {
+      "components": [
+        {
+          "group": "@cyclonedx",
+          "name": "cdxgen",
+          "version": "12.1.0",
+          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.1.0",
+          "type": "application",
+          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.1.0",
+          "publisher": "OWASP Foundation",
+          "authors": [
+            {
+              "name": "OWASP Foundation"
+            }
+          ]
+        }
+      ]
+    },
+    "authors": [
+      {
+        "name": "OWASP Foundation"
+      }
+    ],
+    "lifecycles": [
+      {
+        "phase": "pre-build"
+      }
+    ],
+    "component": {
+      "name": "desktop",
+      "group": "@mav",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40mav/desktop@0.1.0",
+      "bom-ref": "pkg:npm/@mav/desktop@0.1.0",
+      "type": "application"
+    },
+    "properties": [
+      {
+        "name": "cdx:bom:componentTypes",
+        "value": "npm"
+      },
+      {
+        "name": "cdx:bom:componentNamespaces",
+        "value": "@mav\\n@types\\n@vitejs"
+      },
+      {
+        "name": "cdx:bom:componentSrcFiles",
+        "value": "apps/desktop/node_modules/@mav/shared/package.json\\napps/desktop/node_modules/@types/node/package.json\\napps/desktop/node_modules/@types/react-dom/package.json\\napps/desktop/node_modules/@types/react/package.json\\napps/desktop/node_modules/@vitejs/plugin-react/package.json\\napps/desktop/node_modules/react-dom/package.json\\napps/desktop/node_modules/react/package.json\\napps/desktop/node_modules/typescript/package.json\\napps/desktop/node_modules/vite/package.json"
+      }
+    ]
+  },
+  "components": [
+    {
+      "authors": [
+        {
+          "name": "Evan You"
+        }
+      ],
+      "group": "",
+      "name": "vite",
+      "version": "7.3.1",
+      "description": "Native-ESM powered web dev build tool",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/vite@7.3.1",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://vite.dev"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/vitejs/vite.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/vite@7.3.1",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "apps/desktop/node_modules/vite/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "apps/desktop/node_modules/vite/package.json"
+              }
+            ],
+            "concludedValue": "apps/desktop/node_modules/vite/package.json"
+          }
+        ]
+      },
+      "tags": [
+        "web"
+      ]
+    },
+    {
+      "authors": [
+        {
+          "name": "Microsoft Corp."
+        }
+      ],
+      "group": "",
+      "name": "typescript",
+      "version": "5.9.3",
+      "description": "TypeScript is a language for application scale JavaScript development",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://opensource.org/licenses/Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:npm/typescript@5.9.3",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://www.typescriptlang.org/"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/microsoft/TypeScript.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/typescript@5.9.3",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "apps/desktop/node_modules/typescript/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "apps/desktop/node_modules/typescript/package.json"
+              }
+            ],
+            "concludedValue": "apps/desktop/node_modules/typescript/package.json"
+          }
+        ]
+      }
+    },
+    {
+      "group": "",
+      "name": "react-dom",
+      "version": "19.2.4",
+      "description": "React package for working with the DOM.",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/react-dom@19.2.4",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://react.dev/"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/facebook/react.git"
+        }
+      ],
+      "type": "framework",
+      "bom-ref": "pkg:npm/react-dom@19.2.4",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "apps/desktop/node_modules/react-dom/package.json"
+        },
+        {
+          "name": "ImportedModules",
+          "value": "react-dom/client,createRoot,react-dom/client/createRoot"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "apps/desktop/node_modules/react-dom/package.json"
+              }
+            ],
+            "concludedValue": "apps/desktop/node_modules/react-dom/package.json"
+          }
+        ],
+        "occurrences": [
+          {
+            "location": "src/main.tsx#2"
+          },
+          {
+            "location": "src/main.tsx#2"
+          }
+        ]
+      },
+      "tags": [
+        "framework"
+      ]
+    },
+    {
+      "group": "",
+      "name": "react",
+      "version": "19.2.4",
+      "description": "React is a JavaScript library for building user interfaces.",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/react@19.2.4",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://react.dev/"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/facebook/react.git"
+        }
+      ],
+      "type": "framework",
+      "bom-ref": "pkg:npm/react@19.2.4",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "apps/desktop/node_modules/react/package.json"
+        },
+        {
+          "name": "ImportedModules",
+          "value": "react,useMemo,react/useMemo,useState,react/useState,StrictMode,react/StrictMode"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "apps/desktop/node_modules/react/package.json"
+              }
+            ],
+            "concludedValue": "apps/desktop/node_modules/react/package.json"
+          }
+        ],
+        "occurrences": [
+          {
+            "location": "src/App.tsx#1"
+          },
+          {
+            "location": "src/main.tsx#1"
+          }
+        ]
+      },
+      "tags": [
+        "framework"
+      ]
+    },
+    {
+      "authors": [
+        {
+          "name": "Evan You"
+        }
+      ],
+      "group": "@vitejs",
+      "name": "plugin-react",
+      "version": "5.1.4",
+      "description": "The default Vite plugin for React projects",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40vitejs/plugin-react@5.1.4",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#readme"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/vitejs/vite-plugin-react.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/@vitejs/plugin-react@5.1.4",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "apps/desktop/node_modules/@vitejs/plugin-react/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "apps/desktop/node_modules/@vitejs/plugin-react/package.json"
+              }
+            ],
+            "concludedValue": "apps/desktop/node_modules/@vitejs/plugin-react/package.json"
+          }
+        ]
+      }
+    },
+    {
+      "group": "@types",
+      "name": "react-dom",
+      "version": "19.2.3",
+      "description": "TypeScript definitions for react-dom",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40types/react-dom@19.2.3",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-dom"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/@types/react-dom@19.2.3",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "apps/desktop/node_modules/@types/react-dom/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "apps/desktop/node_modules/@types/react-dom/package.json"
+              }
+            ],
+            "concludedValue": "apps/desktop/node_modules/@types/react-dom/package.json"
+          }
+        ]
+      }
+    },
+    {
+      "group": "@types",
+      "name": "react",
+      "version": "19.2.14",
+      "description": "TypeScript definitions for react",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40types/react@19.2.14",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/@types/react@19.2.14",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "apps/desktop/node_modules/@types/react/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "apps/desktop/node_modules/@types/react/package.json"
+              }
+            ],
+            "concludedValue": "apps/desktop/node_modules/@types/react/package.json"
+          }
+        ]
+      }
+    },
+    {
+      "group": "@types",
+      "name": "node",
+      "version": "24.10.13",
+      "description": "TypeScript definitions for node",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40types/node@24.10.13",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/@types/node@24.10.13",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "apps/desktop/node_modules/@types/node/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "apps/desktop/node_modules/@types/node/package.json"
+              }
+            ],
+            "concludedValue": "apps/desktop/node_modules/@types/node/package.json"
+          }
+        ]
+      }
+    },
+    {
+      "group": "@mav",
+      "name": "shared",
+      "version": "0.1.0",
+      "scope": "required",
+      "purl": "pkg:npm/%40mav/shared@0.1.0",
+      "type": "library",
+      "bom-ref": "pkg:npm/@mav/shared@0.1.0",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "apps/desktop/node_modules/@mav/shared/package.json"
+        },
+        {
+          "name": "ImportedModules",
+          "value": "@mav/shared,createEmptyProject,@mav/shared/createEmptyProject,MavAsset,@mav/shared/MavAsset"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "apps/desktop/node_modules/@mav/shared/package.json"
+              }
+            ],
+            "concludedValue": "apps/desktop/node_modules/@mav/shared/package.json"
+          }
+        ],
+        "occurrences": [
+          {
+            "location": "src/App.tsx#2"
+          }
+        ]
+      }
+    }
+  ],
+  "dependencies": [],
+  "annotations": [
+    {
+      "bom-ref": "metadata-annotations",
+      "subjects": [
+        "pkg:npm/@mav/desktop@0.1.0"
+      ],
+      "annotator": {
+        "component": {
+          "group": "@cyclonedx",
+          "name": "cdxgen",
+          "version": "12.1.0",
+          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.1.0",
+          "type": "application",
+          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.1.0",
+          "publisher": "OWASP Foundation",
+          "authors": [
+            {
+              "name": "OWASP Foundation"
+            }
+          ]
+        }
+      },
+      "timestamp": "2026-02-23T12:01:42Z",
+      "text": "This Software Bill-of-Materials (SBOM) document was created on Monday, February 23, 2026 with cdxgen. The data was captured during the pre-build lifecycle phase without building the application. The document describes an application named 'desktop' with version '0.1.0'. There are 9 components. The package type in this SBOM is npm with 3 purl namespaces described under components. The components were identified from 9 source files."
+    }
+  ]
+}

@@ -1,0 +1,556 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:2fcc36e1-859a-4fae-94b6-de1a6e95aea7",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-02-23T12:01:48Z",
+    "tools": {
+      "components": [
+        {
+          "group": "@cyclonedx",
+          "name": "cdxgen",
+          "version": "12.1.0",
+          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.1.0",
+          "type": "application",
+          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.1.0",
+          "publisher": "OWASP Foundation",
+          "authors": [
+            {
+              "name": "OWASP Foundation"
+            }
+          ]
+        }
+      ]
+    },
+    "authors": [
+      {
+        "name": "OWASP Foundation"
+      }
+    ],
+    "lifecycles": [
+      {
+        "phase": "pre-build"
+      }
+    ],
+    "component": {
+      "name": "poc-render-worker",
+      "group": "@mav",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40mav/poc-render-worker@0.1.0",
+      "bom-ref": "pkg:npm/@mav/poc-render-worker@0.1.0",
+      "type": "application"
+    },
+    "properties": [
+      {
+        "name": "cdx:bom:componentTypes",
+        "value": "npm"
+      },
+      {
+        "name": "cdx:bom:componentNamespaces",
+        "value": "@types"
+      },
+      {
+        "name": "cdx:bom:componentSrcFiles",
+        "value": "poc/render-worker/node_modules/@types/cors/package.json\\npoc/render-worker/node_modules/@types/express/package.json\\npoc/render-worker/node_modules/@types/node/package.json\\npoc/render-worker/node_modules/cors/package.json\\npoc/render-worker/node_modules/express/package.json\\npoc/render-worker/node_modules/tsx/package.json\\npoc/render-worker/node_modules/typescript/package.json\\npoc/render-worker/node_modules/zod/package.json"
+      }
+    ]
+  },
+  "components": [
+    {
+      "authors": [
+        {
+          "name": "Colin McDonnell <zod@colinhacks.com>"
+        }
+      ],
+      "group": "",
+      "name": "zod",
+      "version": "3.25.76",
+      "description": "TypeScript-first schema declaration and validation library with static type inference",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/zod@3.25.76",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://zod.dev"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/colinhacks/zod.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/zod@3.25.76",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "poc/render-worker/node_modules/zod/package.json"
+        },
+        {
+          "name": "ImportedModules",
+          "value": "zod,zod/z"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "poc/render-worker/node_modules/zod/package.json"
+              }
+            ],
+            "concludedValue": "poc/render-worker/node_modules/zod/package.json"
+          }
+        ],
+        "occurrences": [
+          {
+            "location": "dist/index.js#3"
+          },
+          {
+            "location": "src/index.ts#3"
+          }
+        ]
+      },
+      "tags": [
+        "validation"
+      ]
+    },
+    {
+      "authors": [
+        {
+          "name": "Microsoft Corp."
+        }
+      ],
+      "group": "",
+      "name": "typescript",
+      "version": "5.9.3",
+      "description": "TypeScript is a language for application scale JavaScript development",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://opensource.org/licenses/Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:npm/typescript@5.9.3",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://www.typescriptlang.org/"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/microsoft/TypeScript.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/typescript@5.9.3",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "poc/render-worker/node_modules/typescript/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "poc/render-worker/node_modules/typescript/package.json"
+              }
+            ],
+            "concludedValue": "poc/render-worker/node_modules/typescript/package.json"
+          }
+        ]
+      }
+    },
+    {
+      "authors": [
+        {
+          "name": "Hiroki Osame <hiroki.osame@gmail.com>"
+        }
+      ],
+      "group": "",
+      "name": "tsx",
+      "version": "4.21.0",
+      "description": "TypeScript Execute (tsx): Node.js enhanced with esbuild to run TypeScript & ESM files",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/tsx@4.21.0",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://tsx.is"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/privatenumber/tsx.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/tsx@4.21.0",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "poc/render-worker/node_modules/tsx/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "poc/render-worker/node_modules/tsx/package.json"
+              }
+            ],
+            "concludedValue": "poc/render-worker/node_modules/tsx/package.json"
+          }
+        ]
+      }
+    },
+    {
+      "authors": [
+        {
+          "name": "TJ Holowaychuk <tj@vision-media.ca>"
+        }
+      ],
+      "group": "",
+      "name": "express",
+      "version": "4.22.1",
+      "description": "Fast, unopinionated, minimalist web framework",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/express@4.22.1",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://expressjs.com/"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/expressjs/express.git"
+        }
+      ],
+      "type": "framework",
+      "bom-ref": "pkg:npm/express@4.22.1",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "poc/render-worker/node_modules/express/package.json"
+        },
+        {
+          "name": "ImportedModules",
+          "value": "express"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "poc/render-worker/node_modules/express/package.json"
+              }
+            ],
+            "concludedValue": "poc/render-worker/node_modules/express/package.json"
+          }
+        ],
+        "occurrences": [
+          {
+            "location": "dist/index.js#2"
+          },
+          {
+            "location": "src/index.ts#2"
+          }
+        ]
+      },
+      "tags": [
+        "framework",
+        "web"
+      ]
+    },
+    {
+      "authors": [
+        {
+          "name": "Troy Goode <troygoode@gmail.com> (https://github.com/troygoode/)"
+        }
+      ],
+      "group": "",
+      "name": "cors",
+      "version": "2.8.6",
+      "description": "Node.js CORS middleware",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/cors@2.8.6",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/expressjs/cors#readme"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/expressjs/cors.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/cors@2.8.6",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "poc/render-worker/node_modules/cors/package.json"
+        },
+        {
+          "name": "ImportedModules",
+          "value": "cors"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "poc/render-worker/node_modules/cors/package.json"
+              }
+            ],
+            "concludedValue": "poc/render-worker/node_modules/cors/package.json"
+          }
+        ],
+        "occurrences": [
+          {
+            "location": "dist/index.js#1"
+          },
+          {
+            "location": "src/index.ts#1"
+          }
+        ]
+      }
+    },
+    {
+      "group": "@types",
+      "name": "node",
+      "version": "24.10.13",
+      "description": "TypeScript definitions for node",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40types/node@24.10.13",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/@types/node@24.10.13",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "poc/render-worker/node_modules/@types/node/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "poc/render-worker/node_modules/@types/node/package.json"
+              }
+            ],
+            "concludedValue": "poc/render-worker/node_modules/@types/node/package.json"
+          }
+        ]
+      }
+    },
+    {
+      "group": "@types",
+      "name": "express",
+      "version": "4.17.25",
+      "description": "TypeScript definitions for express",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40types/express@4.17.25",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/express"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/@types/express@4.17.25",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "poc/render-worker/node_modules/@types/express/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "poc/render-worker/node_modules/@types/express/package.json"
+              }
+            ],
+            "concludedValue": "poc/render-worker/node_modules/@types/express/package.json"
+          }
+        ]
+      }
+    },
+    {
+      "group": "@types",
+      "name": "cors",
+      "version": "2.8.19",
+      "description": "TypeScript definitions for cors",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40types/cors@2.8.19",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/cors"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "pkg:npm/@types/cors@2.8.19",
+      "properties": [
+        {
+          "name": "SrcFile",
+          "value": "poc/render-worker/node_modules/@types/cors/package.json"
+        }
+      ],
+      "evidence": {
+        "identity": [
+          {
+            "field": "purl",
+            "confidence": 0.7,
+            "methods": [
+              {
+                "technique": "manifest-analysis",
+                "confidence": 0.7,
+                "value": "poc/render-worker/node_modules/@types/cors/package.json"
+              }
+            ],
+            "concludedValue": "poc/render-worker/node_modules/@types/cors/package.json"
+          }
+        ]
+      }
+    }
+  ],
+  "dependencies": [],
+  "annotations": [
+    {
+      "bom-ref": "metadata-annotations",
+      "subjects": [
+        "pkg:npm/@mav/poc-render-worker@0.1.0"
+      ],
+      "annotator": {
+        "component": {
+          "group": "@cyclonedx",
+          "name": "cdxgen",
+          "version": "12.1.0",
+          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.1.0",
+          "type": "application",
+          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.1.0",
+          "publisher": "OWASP Foundation",
+          "authors": [
+            {
+              "name": "OWASP Foundation"
+            }
+          ]
+        }
+      },
+      "timestamp": "2026-02-23T12:01:48Z",
+      "text": "This Software Bill-of-Materials (SBOM) document was created on Monday, February 23, 2026 with cdxgen. The data was captured during the pre-build lifecycle phase without building the application. The document describes an application named 'poc-render-worker' with version '0.1.0'. There are 8 components. The package type in this SBOM is npm with a single purl namespace '@types' described under components. The components were identified from 8 source files."
+    }
+  ]
+}
