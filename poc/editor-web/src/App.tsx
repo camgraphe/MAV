@@ -6,10 +6,12 @@ import type {
 } from "./preview/protocol";
 import { EditorShell } from "./components/EditorShell/EditorShell";
 import { TopToolbar } from "./components/EditorShell/TopToolbar";
+import { AboutModal } from "./components/EditorShell/AboutModal";
 import { TimelinePanel } from "./components/Timeline/TimelinePanel";
 import { PreviewPanel } from "./components/Preview/PreviewPanel";
 import { InspectorPanel } from "./components/Inspector/InspectorPanel";
 import { MediaBinPanel } from "./components/MediaBin/MediaBinPanel";
+import { LibraryPanel } from "./components/MediaBin/LibraryPanel";
 import { DiagnosticsPanel } from "./components/Diagnostics/DiagnosticsPanel";
 import { ExportModal } from "./components/Export/ExportModal";
 
@@ -516,6 +518,7 @@ function buildQATargets(durationUs: number, count: number, seed: number): number
 export default function App() {
   const [project, setProject] = useState<ProjectState>(createInitialProject);
   const [playheadMs, setPlayheadMs] = useState(1200);
+  const [libraryTab, setLibraryTab] = useState<"media" | "audio" | "text" | "stickers" | "effects" | "ai">("media");
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selectedClipKeys, setSelectedClipKeys] = useState<string[]>([]);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(80);
@@ -524,8 +527,13 @@ export default function App() {
   const [snapMs, setSnapMs] = useState(100);
   const [collisionMode, setCollisionMode] = useState<CollisionMode>("no-overlap");
   const [rippleMode, setRippleMode] = useState<RippleMode>("none");
+  const [timelineTool, setTimelineTool] = useState<"select" | "split">("select");
+  const [mainTrackMagnet, setMainTrackMagnet] = useState(true);
+  const [showFilmstrip, setShowFilmstrip] = useState(true);
   const [log, setLog] = useState("Ready.");
   const [isPlaying, setIsPlaying] = useState(false);
+  const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
@@ -562,6 +570,8 @@ export default function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportJob, setExportJob] = useState<ExportJobState | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
+  const [exportPreset, setExportPreset] = useState<"720p" | "1080p">("1080p");
+  const [exportFps, setExportFps] = useState<24 | 30 | 60>(30);
 
   const dragRef = useRef<DragState | null>(null);
   const dragRafRef = useRef<number | null>(null);
@@ -637,6 +647,17 @@ export default function App() {
       }
       return next;
     });
+  };
+
+  const setProjectName = (value: string) => {
+    const nextName = value.trim() || "untitled-project";
+    setProjectWithNormalize((prev) => ({
+      ...prev,
+      meta: {
+        ...prev.meta,
+        projectId: nextName,
+      },
+    }), { recordHistory: false });
   };
 
   const getClipRenderState = (trackId: string, clip: Clip): Clip => {
@@ -839,6 +860,17 @@ export default function App() {
     clip: Clip,
   ) => {
     if (event.button !== 0) return;
+
+    if (timelineTool === "split") {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const ratio = rect.width > 0 ? clamp((event.clientX - rect.left) / rect.width, 0, 1) : 0;
+      const atMs = clip.startMs + ratio * clip.durationMs;
+      setPlayheadMs(Math.round(atMs));
+      splitClipAt(trackId, clip.id, atMs);
+      setLog(`Split ${clip.label} at ${Math.round(atMs)}ms.`);
+      return;
+    }
+
     const key = clipKey(trackId, clip.id);
 
     if (event.shiftKey || event.metaKey || event.ctrlKey) {
@@ -1053,6 +1085,50 @@ export default function App() {
     });
   };
 
+  const splitClipAt = (trackId: string, clipId: string, targetMs: number) => {
+    setProjectWithNormalize((prev) => {
+      const pos = findClip(prev, { trackId, clipId });
+      if (!pos) return prev;
+      const tracks = [...prev.timeline.tracks];
+      const track = { ...tracks[pos.trackIndex] };
+      const clips = [...track.clips];
+      const clip = clips[pos.clipIndex];
+
+      const splitAt = clamp(
+        snapActive ? quantize(targetMs, snapMs) : targetMs,
+        clip.startMs + MIN_CLIP_DURATION_MS,
+        clip.startMs + clip.durationMs - MIN_CLIP_DURATION_MS,
+      );
+      const leftDuration = splitAt - clip.startMs;
+      const rightDuration = clip.durationMs - leftDuration;
+
+      const left: Clip = {
+        ...clip,
+        id: `${clip.id}-a`,
+        label: `${clip.label}-A`,
+        durationMs: leftDuration,
+        outMs: clip.inMs + leftDuration,
+      };
+
+      const right: Clip = {
+        ...clip,
+        id: `${clip.id}-b`,
+        label: `${clip.label}-B`,
+        startMs: splitAt,
+        inMs: clip.inMs + leftDuration,
+        durationMs: rightDuration,
+        outMs: clip.inMs + leftDuration + rightDuration,
+      };
+
+      clips.splice(pos.clipIndex, 1, left, right);
+      track.clips = clips;
+      tracks[pos.trackIndex] = track;
+      setSelection({ trackId: track.id, clipId: right.id });
+      setSelectedClipKeys([clipKey(track.id, right.id)]);
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+  };
+
   const addOverlayClip = () => {
     setProjectWithNormalize((prev) => {
       const tracks = prev.timeline.tracks.map((track) => {
@@ -1074,6 +1150,15 @@ export default function App() {
       });
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
+  };
+
+  const runAutoCaptionsPlaceholder = () => {
+    const hasVideo = project.assets.some((asset) => asset.kind === "video");
+    if (!hasVideo) {
+      setLog("Auto captions requires at least one video asset.");
+      return;
+    }
+    setLog("Auto captions placeholder executed. Wire AI job contract next.");
   };
 
   const updateSelectedTiming = (patch: Partial<Pick<Clip, "startMs" | "durationMs" | "inMs" | "outMs">>) => {
@@ -1285,6 +1370,11 @@ export default function App() {
           projectJson: normalized,
           assetUrls,
           preset: "mp4-h264-aac",
+          renderOptions: {
+            preset: exportPreset,
+            fps: exportFps,
+            format: "mp4",
+          },
           idempotencyKey: `${normalized.meta.projectId}:${normalized.meta.updatedAt}`,
         }),
       });
@@ -1607,6 +1697,11 @@ export default function App() {
   }, [clipExists, selection]);
 
   useEffect(() => {
+    if (devMode) return;
+    setDiagnosticsVisible(false);
+  }, [devMode]);
+
+  useEffect(() => {
     if (!isPlaying) {
       const playback = playbackRef.current;
       if (playback.rafId != null) {
@@ -1723,6 +1818,12 @@ export default function App() {
       window.removeEventListener("blur", onWindowBlur);
     };
   }, [decoderFps, nudgeSelected, redo, removeSelected, splitSelected, togglePlayback, undo]);
+
+  useEffect(() => {
+    if (mainTrackMagnet && collisionMode === "allow-overlap") {
+      setCollisionMode("no-overlap");
+    }
+  }, [collisionMode, mainTrackMagnet]);
 
   useEffect(() => {
     return () => {
@@ -2122,42 +2223,50 @@ export default function App() {
     setPlayheadMs(clamp(Math.round(value), 0, project.timeline.durationMs));
   };
 
+  const timelineStatus = `Ready | Selected: ${selectedClipCount} | Ripple: ${rippleMode}`;
+  const diagnosticsEnabled = devMode && diagnosticsVisible;
+
   return (
     <>
       <EditorShell
         toolbar={(
           <TopToolbar
-            playheadMs={playheadMs}
-            maxPlayheadMs={project.timeline.durationMs}
-            onPlayheadChange={setPlayheadClamped}
-            pixelsPerSecond={pixelsPerSecond}
-            onZoomChange={setPixelsPerSecond}
-            isPlaying={isPlaying}
-            onTogglePlay={togglePlayback}
-            onSplit={splitSelected}
-            onAddOverlay={addOverlayClip}
+            projectName={project.meta.projectId}
+            onProjectNameChange={setProjectName}
             onUndo={undo}
             onRedo={redo}
             onExport={() => setExportOpen(true)}
             onSave={saveProject}
             onLoad={loadProject}
+            onOpenAbout={() => setAboutOpen(true)}
+            canShowDiagnostics={devMode}
+            diagnosticsVisible={diagnosticsVisible}
+            onToggleDiagnostics={() => setDiagnosticsVisible((prev) => !prev)}
           />
         )}
         mediaBin={(
-          <MediaBinPanel
-            assets={project.assets}
-            activeAssetId={activeAssetId}
-            onUpload={(file) => {
-              void onPickVideo(file);
-            }}
-            onActivateAsset={(assetId) => {
-              void onActivateAsset(assetId);
-            }}
-            onAddToTimeline={(assetId) => addAssetToTimeline(assetId)}
-            onAssetDragStart={(assetId) => {
-              const asset = project.assets.find((item) => item.id === assetId);
-              setLog(`Drag asset to timeline: ${asset?.name ?? assetId}`);
-            }}
+          <LibraryPanel
+            activeTab={libraryTab}
+            onTabChange={setLibraryTab}
+            hasVideoAsset={project.assets.some((asset) => asset.kind === "video")}
+            onRunAutoCaptions={runAutoCaptionsPlaceholder}
+            mediaContent={(
+              <MediaBinPanel
+                assets={project.assets}
+                activeAssetId={activeAssetId}
+                onUpload={(file) => {
+                  void onPickVideo(file);
+                }}
+                onActivateAsset={(assetId) => {
+                  void onActivateAsset(assetId);
+                }}
+                onAddToTimeline={(assetId) => addAssetToTimeline(assetId)}
+                onAssetDragStart={(assetId) => {
+                  const asset = project.assets.find((item) => item.id === assetId);
+                  setLog(`Drag asset to timeline: ${asset?.name ?? assetId}`);
+                }}
+              />
+            )}
           />
         )}
         preview={(
@@ -2166,10 +2275,11 @@ export default function App() {
             fallbackVideoRef={fallbackVideoRef}
             videoUrl={videoUrl}
             onLoadedMetadata={onPreviewMetadataLoaded}
-            decoderMode={decoderMode}
-            webCodecsAvailable={webCodecsAvailable}
-            sourceDetails={sourceDetails}
-            isFmp4Source={isFmp4Source}
+            playheadMs={playheadMs}
+            durationMs={project.timeline.durationMs}
+            isPlaying={isPlaying}
+            onTogglePlay={togglePlayback}
+            onScrub={setPlayheadClamped}
           />
         )}
         inspector={(
@@ -2186,6 +2296,7 @@ export default function App() {
             playheadMs={playheadMs}
             onPlayheadChange={setPlayheadClamped}
             pixelsPerSecond={pixelsPerSecond}
+            onZoomChange={setPixelsPerSecond}
             zoomWidthPx={zoomWidthPx}
             snapGuideMs={snapGuideMs}
             selection={selection}
@@ -2195,10 +2306,32 @@ export default function App() {
             snapEnabled={snapEnabled}
             altSnapDisabled={altSnapDisabled}
             snapMs={snapMs}
+            toolMode={timelineTool}
+            magnetEnabled={mainTrackMagnet}
+            showFilmstrip={showFilmstrip}
+            statusText={timelineStatus}
             onSnapEnabledChange={setSnapEnabled}
             onSnapMsChange={setSnapMs}
-            onCollisionModeChange={setCollisionMode}
+            onCollisionModeChange={(nextMode) => {
+              if (mainTrackMagnet && nextMode === "allow-overlap") {
+                setCollisionMode("no-overlap");
+                return;
+              }
+              setCollisionMode(nextMode);
+            }}
             onRippleModeChange={setRippleMode}
+            onToolModeChange={setTimelineTool}
+            onMagnetEnabledChange={(enabled) => {
+              setMainTrackMagnet(enabled);
+              if (enabled && collisionMode === "allow-overlap") {
+                setCollisionMode("no-overlap");
+              }
+            }}
+            onShowFilmstripChange={setShowFilmstrip}
+            onUndo={undo}
+            onRedo={redo}
+            onSplit={splitSelected}
+            onDelete={removeSelected}
             getClipRenderState={getClipRenderState}
             onClipPointerDown={onClipPointerDown}
             onAssetDrop={(assetId, trackId, startMs) => {
@@ -2207,7 +2340,7 @@ export default function App() {
           />
         )}
         diagnostics={
-          devMode ? (
+          diagnosticsEnabled ? (
             <DiagnosticsPanel
               decoderLogs={decoderLogs}
               timestampAuditSamples={timestampAuditSamples}
@@ -2232,13 +2365,17 @@ export default function App() {
             />
           ) : undefined
         }
-        status={`${log} | Selected: ${selectedClipCount} | Ripple: ${rippleMode}`}
+        status={log}
       />
 
       <ExportModal
         open={exportOpen}
         busy={exportBusy}
         job={exportJob}
+        preset={exportPreset}
+        fps={exportFps}
+        onPresetChange={setExportPreset}
+        onFpsChange={setExportFps}
         onClose={() => setExportOpen(false)}
         onStart={() => {
           void createExportJob();
@@ -2251,6 +2388,8 @@ export default function App() {
         }}
         onDownload={downloadExport}
       />
+
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </>
   );
 }

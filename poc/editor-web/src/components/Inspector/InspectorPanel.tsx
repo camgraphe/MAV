@@ -34,7 +34,18 @@ export function InspectorPanel({
         <h2>Inspector</h2>
       </div>
 
-      {!selectedClip ? <p className="hint">Select a clip to edit properties.</p> : null}
+      {!selectedClip ? (
+        <div className="inspectorEmptyState">
+          <p className="hint">Select a clip to edit properties.</p>
+          <p className="hint">Quick start checklist:</p>
+          <ul>
+            <li>Upload media in the Media tab.</li>
+            <li>Drag an asset into the timeline.</li>
+            <li>Use `S` to split and `Delete` to remove clips.</li>
+            <li>Press `Space` to play or pause preview.</li>
+          </ul>
+        </div>
+      ) : null}
       {selectedCount > 1 ? <p className="hint">{selectedCount} clips selected (editing primary selection).</p> : null}
 
       {selectedClip ? (

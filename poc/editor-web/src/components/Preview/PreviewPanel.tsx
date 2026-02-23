@@ -5,32 +5,41 @@ type PreviewPanelProps = {
   fallbackVideoRef: RefObject<HTMLVideoElement | null>;
   videoUrl: string | null;
   onLoadedMetadata: (durationMs: number, width: number, height: number) => void;
-  decoderMode: "none" | "webcodecs" | "fallback";
-  webCodecsAvailable: boolean;
-  sourceDetails: {
-    codec: string | null;
-    codedWidth: number | null;
-    codedHeight: number | null;
-    descriptionLength: number | null;
-    timestampAuditIssueCount: number | null;
-  };
-  isFmp4Source: boolean;
+  playheadMs: number;
+  durationMs: number;
+  isPlaying: boolean;
+  onTogglePlay: () => void;
+  onScrub: (nextMs: number) => void;
 };
+
+function formatTimecode(ms: number) {
+  const safe = Math.max(0, Math.round(ms));
+  const totalSeconds = Math.floor(safe / 1000);
+  const mins = Math.floor(totalSeconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const secs = (totalSeconds % 60).toString().padStart(2, "0");
+  const millis = (safe % 1000).toString().padStart(3, "0");
+  return `${mins}:${secs}.${millis}`;
+}
 
 export function PreviewPanel({
   canvasRef,
   fallbackVideoRef,
   videoUrl,
   onLoadedMetadata,
-  decoderMode,
-  webCodecsAvailable,
-  sourceDetails,
-  isFmp4Source,
+  playheadMs,
+  durationMs,
+  isPlaying,
+  onTogglePlay,
+  onScrub,
 }: PreviewPanelProps) {
+  const maxDuration = Math.max(1000, durationMs);
+
   return (
-    <div>
+    <div className="previewPanel">
       <div className="panelHeader">
-        <h2>Preview</h2>
+        <h2>Player</h2>
       </div>
 
       <canvas ref={canvasRef} width={960} height={540} className="previewCanvas" />
@@ -50,22 +59,21 @@ export function PreviewPanel({
         }}
       />
 
-      <p className="hint">
-        Mode: <strong>{decoderMode}</strong>. WebCodecs available: <strong>{webCodecsAvailable ? "yes" : "no"}</strong>
-      </p>
-      <p className="hint">
-        Source: codec=<strong>{sourceDetails.codec ?? "n/a"}</strong>, coded=
-        <strong>
-          {sourceDetails.codedWidth ?? 0}x{sourceDetails.codedHeight ?? 0}
-        </strong>
-        , avcC bytes=<strong>{sourceDetails.descriptionLength ?? 0}</strong>, timestamp issues=
-        <strong>{sourceDetails.timestampAuditIssueCount ?? 0}</strong>
-      </p>
-      {isFmp4Source ? (
-        <p className="hint">
-          fMP4 detected: preview forced to HTMLVideoElement + RVFC fallback path.
-        </p>
-      ) : null}
+      <div className="playerControls">
+        <button type="button" onClick={onTogglePlay}>
+          {isPlaying ? "Pause" : "Play"}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={maxDuration}
+          value={Math.min(maxDuration, Math.max(0, playheadMs))}
+          onChange={(event) => onScrub(Number(event.target.value))}
+        />
+        <span className="timecode">
+          {formatTimecode(playheadMs)} / {formatTimecode(maxDuration)}
+        </span>
+      </div>
     </div>
   );
 }

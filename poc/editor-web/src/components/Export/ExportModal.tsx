@@ -11,6 +11,10 @@ type ExportModalProps = {
   open: boolean;
   busy: boolean;
   job: ExportJobState | null;
+  preset: "720p" | "1080p";
+  fps: 24 | 30 | 60;
+  onPresetChange: (value: "720p" | "1080p") => void;
+  onFpsChange: (value: 24 | 30 | 60) => void;
   onClose: () => void;
   onStart: () => void;
   onCancel: () => void;
@@ -22,6 +26,10 @@ export function ExportModal({
   open,
   busy,
   job,
+  preset,
+  fps,
+  onPresetChange,
+  onFpsChange,
   onClose,
   onStart,
   onCancel,
@@ -47,6 +55,28 @@ export function ExportModal({
           <h2 id="export-modal-title">Export MP4</h2>
           <p className="hint">Server-side render worker (H.264/AAC preset).</p>
         </header>
+
+        <div className="exportSettings">
+          <label>
+            Preset
+            <select value={preset} onChange={(event) => onPresetChange(event.target.value as "720p" | "1080p")}>
+              <option value="720p">720p</option>
+              <option value="1080p">1080p</option>
+            </select>
+          </label>
+          <label>
+            FPS
+            <select value={fps} onChange={(event) => onFpsChange(Number(event.target.value) as 24 | 30 | 60)}>
+              <option value={24}>24</option>
+              <option value={30}>30</option>
+              <option value={60}>60</option>
+            </select>
+          </label>
+          <label>
+            Format
+            <input type="text" value="MP4 (H.264/AAC)" readOnly />
+          </label>
+        </div>
 
         <div className="exportStatus">
           <p>
