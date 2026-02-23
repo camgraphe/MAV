@@ -14,6 +14,7 @@ import { MediaBinPanel } from "./components/MediaBin/MediaBinPanel";
 import { LibraryPanel } from "./components/MediaBin/LibraryPanel";
 import { DiagnosticsPanel } from "./components/Diagnostics/DiagnosticsPanel";
 import { ExportModal } from "./components/Export/ExportModal";
+import { analyzeMediaFile } from "./preview/media-analysis";
 
 type TrackKind = "video" | "overlay" | "audio";
 
@@ -252,6 +253,9 @@ type AssetAnalysisCacheValue = {
   waveform: number[];
   thumbnails: string[];
   codecGuess: string | null;
+  durationMs?: number;
+  width?: number;
+  height?: number;
 };
 
 declare global {
@@ -793,6 +797,9 @@ export default function App() {
               waveform: analysis.waveform,
               thumbnails: analysis.thumbnails,
               codec: asset.codec ?? analysis.codecGuess ?? undefined,
+              durationMs: Math.max(asset.durationMs ?? 0, analysis.durationMs ?? 0) || asset.durationMs,
+              width: analysis.width ?? asset.width,
+              height: analysis.height ?? asset.height,
             }
           : asset,
       ),
@@ -808,22 +815,70 @@ export default function App() {
       return;
     }
 
-    const worker = analysisWorkerRef.current;
-    if (!worker || assetThumbBusyRef.current.has(assetId)) return;
+    if (assetThumbBusyRef.current.has(assetId)) return;
     assetThumbBusyRef.current.add(assetId);
+    const worker = analysisWorkerRef.current;
 
-    void file.arrayBuffer().then((buffer) => {
-      worker.postMessage(
-        {
-          type: "analyze",
-          assetId,
-          buffer,
-          durationMs,
-          thumbnailsPerSecond: 2,
-        } satisfies AnalysisWorkerInMessage,
-        [buffer],
-      );
-    });
+    const queueFallbackWorker = () => {
+      if (!worker) {
+        assetThumbBusyRef.current.delete(assetId);
+        return;
+      }
+      void file.arrayBuffer().then((buffer) => {
+        worker.postMessage(
+          {
+            type: "analyze",
+            assetId,
+            buffer,
+            durationMs,
+            thumbnailsPerSecond: 2,
+          } satisfies AnalysisWorkerInMessage,
+          [buffer],
+        );
+      }).catch(() => {
+        assetThumbBusyRef.current.delete(assetId);
+      });
+    };
+
+    void analyzeMediaFile(file, {
+      durationMs,
+      thumbnailsPerSecond: 2,
+      maxThumbnails: 12,
+      waveformPoints: 96,
+    })
+      .then((analysis) => {
+        const next: AssetAnalysisCacheValue = {
+          waveform: analysis.waveform,
+          thumbnails: analysis.thumbnails,
+          codecGuess: analysis.codecGuess,
+          durationMs: analysis.durationMs,
+          width: analysis.width,
+          height: analysis.height,
+        };
+        const nextCacheKey = assetAnalysisKeyRef.current.get(assetId);
+        if (nextCacheKey !== cacheKey) {
+          assetThumbBusyRef.current.delete(assetId);
+          return;
+        }
+        if (next.thumbnails.length === 0 && next.waveform.length === 0) {
+          queueFallbackWorker();
+          return;
+        }
+
+        analysisCacheRef.current.set(cacheKey, next);
+        if (analysisCacheRef.current.size > ANALYSIS_CACHE_LIMIT) {
+          const oldest = analysisCacheRef.current.keys().next().value;
+          if (typeof oldest === "string") {
+            analysisCacheRef.current.delete(oldest);
+          }
+        }
+        persistAnalysisCache();
+        applyAnalysisToAsset(assetId, next);
+        assetThumbBusyRef.current.delete(assetId);
+      })
+      .catch(() => {
+        queueFallbackWorker();
+      });
   };
 
   const getClipRenderState = (trackId: string, clip: Clip): Clip => {
