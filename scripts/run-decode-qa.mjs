@@ -25,6 +25,23 @@ function sleep(ms) {
   });
 }
 
+async function runCommand(command, commandArgs, cwd) {
+  await new Promise((resolve, reject) => {
+    const child = spawn(command, commandArgs, {
+      cwd,
+      stdio: "inherit",
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve(null);
+        return;
+      }
+      reject(new Error(`${command} ${commandArgs.join(" ")} exited with code ${code ?? "null"}`));
+    });
+  });
+}
+
 async function waitForUrl(url, timeoutMs) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -118,6 +135,7 @@ async function retry(action, retries = 1) {
 
 async function main() {
   const startServer = hasFlag("--start-server");
+  const serverMode = getArg("--server-mode", "preview");
   const enforceThresholds = hasFlag("--enforce-thresholds");
   const scenarioCount = Number(getArg("--scenarios", "50"));
   const port = Number(getArg("--port", "4174"));
@@ -154,19 +172,47 @@ async function main() {
   let context = null;
   try {
     if (startServer) {
+      if (serverMode !== "dev" && serverMode !== "preview") {
+        throw new Error(`Unsupported --server-mode value: ${serverMode}`);
+      }
+
+      if (serverMode === "preview") {
+        await runCommand(
+          "pnpm",
+          ["--filter", "@mav/poc-editor-web", "build"],
+          rootDir,
+        );
+      }
+
+      const serverArgs =
+        serverMode === "preview"
+          ? [
+              "--filter",
+              "@mav/poc-editor-web",
+              "exec",
+              "vite",
+              "preview",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              String(port),
+              "--strictPort",
+            ]
+          : [
+              "--filter",
+              "@mav/poc-editor-web",
+              "exec",
+              "vite",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              String(port),
+              "--strictPort",
+            ];
+
       serverProcess = spawn(
         "pnpm",
-        [
-          "--filter",
-          "@mav/poc-editor-web",
-          "exec",
-          "vite",
-          "--host",
-          "127.0.0.1",
-          "--port",
-          String(port),
-          "--strictPort",
-        ],
+        serverArgs,
         {
           cwd: rootDir,
           stdio: ["ignore", "pipe", "pipe"],
