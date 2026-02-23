@@ -98,6 +98,18 @@ type InteractionPreview = {
   snapGuideMs: number | null;
 };
 
+type ProgramClipContext = {
+  trackId: string;
+  clipId: string;
+  assetId: string;
+  assetUrl: string;
+  clipStartMs: number;
+  clipEndMs: number;
+  inMs: number;
+  outMs: number;
+  localMs: number;
+};
+
 type CollisionMode = "no-overlap" | "push" | "allow-overlap";
 type RippleMode = "none" | "ripple-delete";
 
@@ -367,6 +379,32 @@ function findClip(project: ProjectState, selection: Selection | null) {
   return { trackIndex, clipIndex };
 }
 
+function findProgramClipAtMs(project: ProjectState, playheadMs: number): ProgramClipContext | null {
+  const videoTracks = project.timeline.tracks.filter((track) => track.kind === "video");
+  for (const track of videoTracks) {
+    for (const clip of track.clips) {
+      const clipStartMs = clip.startMs;
+      const clipEndMs = clip.startMs + clip.durationMs;
+      if (playheadMs < clipStartMs || playheadMs >= clipEndMs) continue;
+      const asset = project.assets.find((entry) => entry.id === clip.assetId && entry.kind === "video");
+      if (!asset?.url) continue;
+      const localMs = clamp(Math.round(clip.inMs + (playheadMs - clipStartMs)), clip.inMs, clip.outMs);
+      return {
+        trackId: track.id,
+        clipId: clip.id,
+        assetId: clip.assetId,
+        assetUrl: asset.url,
+        clipStartMs,
+        clipEndMs,
+        inMs: clip.inMs,
+        outMs: clip.outMs,
+        localMs,
+      };
+    }
+  }
+  return null;
+}
+
 function collectSnapTargets(project: ProjectState, excludeClipId: string, playheadMs: number): number[] {
   const edges = [playheadMs];
   for (const track of project.timeline.tracks) {
@@ -565,7 +603,7 @@ export default function App() {
   const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
 
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [sourceVideoUrl, setSourceVideoUrl] = useState<string | null>(null);
   const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
   const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
   const [videoDurationMs, setVideoDurationMs] = useState<number>(0);
@@ -622,6 +660,7 @@ export default function App() {
   const exportPollTimerRef = useRef<number | null>(null);
 
   const decodeWorkerRef = useRef<Worker | null>(null);
+  const loadedDecoderAssetIdRef = useRef<string | null>(null);
   const decodeRequestIdRef = useRef(0);
   const latestHandledRequestIdRef = useRef(0);
   const pendingSeekRef = useRef<Map<number, PendingSeek>>(new Map());
@@ -639,6 +678,7 @@ export default function App() {
   const sourceVideoRef = useRef<HTMLVideoElement | null>(null);
   const assetFilesRef = useRef<Map<string, File>>(new Map());
   const previewAssetIdRef = useRef<string | null>(null);
+  const programAssetIdRef = useRef<string | null>(null);
 
   const webCodecsAvailable = useMemo(
     () => typeof VideoDecoder !== "undefined" && typeof VideoEncoder !== "undefined",
@@ -666,14 +706,8 @@ export default function App() {
     [project.timeline.durationMs, videoDurationMs, decoderDurationUs],
   );
   const sourceMonitorDurationMs = useMemo(
-    () =>
-      Math.max(
-        sourceDurationMs,
-        videoDurationMs,
-        decoderDurationUs > 0 ? Math.round(decoderDurationUs / 1000) : 0,
-        1000,
-      ),
-    [sourceDurationMs, videoDurationMs, decoderDurationUs],
+    () => Math.max(sourceDurationMs, 1000),
+    [sourceDurationMs],
   );
   const clipKey = (trackId: string, clipId: string) => `${trackId}:${clipId}`;
   const selectedClipSet = useMemo(() => new Set(selectedClipKeys), [selectedClipKeys]);
@@ -684,6 +718,17 @@ export default function App() {
     if (!pos) return null;
     return project.timeline.tracks[pos.trackIndex].clips[pos.clipIndex];
   }, [project, selection]);
+
+  const programClipContext = useMemo(
+    () => findProgramClipAtMs(project, playheadMs),
+    [project, playheadMs],
+  );
+  const programVideoUrl = programClipContext?.assetUrl ?? null;
+  const programAssetId = programClipContext?.assetId ?? null;
+  const programLocalPlayheadUs = useMemo(
+    () => (programClipContext ? toUs(programClipContext.localMs) : playheadUs),
+    [playheadUs, programClipContext],
+  );
 
   const clipExists = (trackId: string, clipId: string) =>
     project.timeline.tracks.some((track) => track.id === trackId && track.clips.some((clip) => clip.id === clipId));
@@ -1520,6 +1565,10 @@ export default function App() {
   };
 
   const toggleSourcePlayback = () => {
+    if (!sourceVideoUrl) {
+      setLog("Open a source asset to play in Source monitor.");
+      return;
+    }
     setIsPlaying(false);
     setSourceIsPlaying((prev) => !prev);
   };
@@ -2008,13 +2057,17 @@ export default function App() {
   }, [clipExists, selection]);
 
   useEffect(() => {
+    programAssetIdRef.current = programAssetId;
+  }, [programAssetId]);
+
+  useEffect(() => {
     if (devMode) return;
     setDiagnosticsVisible(false);
   }, [devMode]);
 
   useEffect(() => {
     const playback = playbackRef.current;
-    if (!isPlaying || videoUrl) {
+    if (!isPlaying || programVideoUrl) {
       if (playback.rafId != null) {
         cancelAnimationFrame(playback.rafId);
         playback.rafId = null;
@@ -2052,10 +2105,10 @@ export default function App() {
       }
       playback.lastTs = null;
     };
-  }, [isPlaying, loopPlayback, markInMs, markOutMs, playbackDurationMs, videoUrl]);
+  }, [isPlaying, loopPlayback, markInMs, markOutMs, playbackDurationMs, programVideoUrl]);
 
   useEffect(() => {
-    if (!isPlaying || !videoUrl) return;
+    if (!isPlaying || !programVideoUrl || !programClipContext) return;
 
     const video = programVideoRef.current;
     const canvas = programCanvasRef.current;
@@ -2070,6 +2123,9 @@ export default function App() {
     const loopStartMs = clamp(markInMs ?? 0, 0, playbackDurationMs);
     const loopEndMs = clamp(markOutMs ?? playbackDurationMs, 0, playbackDurationMs);
     const loopEnabled = loopPlayback && loopEndMs > loopStartMs;
+    const clipStartMs = programClipContext.clipStartMs;
+    const clipEndMs = programClipContext.clipEndMs;
+    const clipInMs = programClipContext.inMs;
 
     let cancelled = false;
     let rafId: number | null = null;
@@ -2081,11 +2137,18 @@ export default function App() {
 
     const drawAndSync = (mediaTimeSeconds?: number) => {
       if (cancelled) return;
-      const currentMs = Math.round((mediaTimeSeconds ?? video.currentTime) * 1000);
+      const localMs = Math.round((mediaTimeSeconds ?? video.currentTime) * 1000);
+      const currentMs = clipStartMs + (localMs - clipInMs);
 
       if (loopEnabled && currentMs >= loopEndMs) {
-        video.currentTime = loopStartMs / 1000;
+        const loopLocalMs = clipInMs + (loopStartMs - clipStartMs);
+        video.currentTime = Math.max(0, loopLocalMs) / 1000;
         setPlayheadMs(loopStartMs);
+        return;
+      }
+
+      if (currentMs >= clipEndMs) {
+        setPlayheadMs(clipEndMs);
         return;
       }
 
@@ -2124,7 +2187,8 @@ export default function App() {
 
     void (async () => {
       try {
-        video.currentTime = clamp(initialPlayheadMs, 0, playbackDurationMs) / 1000;
+        const initialLocalMs = clipInMs + (clamp(initialPlayheadMs, clipStartMs, clipEndMs) - clipStartMs);
+        video.currentTime = Math.max(0, initialLocalMs) / 1000;
         await video.play();
         scheduleFrame();
       } catch (error) {
@@ -2151,8 +2215,9 @@ export default function App() {
     markInMs,
     markOutMs,
     playbackDurationMs,
+    programClipContext,
+    programVideoUrl,
     setLog,
-    videoUrl,
   ]);
 
   useEffect(() => {
@@ -2382,7 +2447,7 @@ export default function App() {
           descriptionLength: message.descriptionLength,
           timestampAuditIssueCount: message.timestampAudit?.issueCount ?? 0,
         });
-        const loadedAssetId = previewAssetIdRef.current;
+        const loadedAssetId = programAssetIdRef.current ?? previewAssetIdRef.current;
         if (loadedAssetId) {
           setProject((prev) => ({
             ...prev,
@@ -2470,25 +2535,64 @@ export default function App() {
       worker.postMessage({ type: "dispose" } satisfies DecodeWorkerInMessage);
       worker.terminate();
       decodeWorkerRef.current = null;
+      loadedDecoderAssetIdRef.current = null;
       cleanupPointerListeners();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (decoderMode !== "webcodecs" || isPlaying) return;
-    queuePreviewSeek(playheadUs);
-  }, [decoderMode, isPlaying, playheadUs]);
+    const assetId = programAssetId;
+    if (!assetId) return;
+    if (loadedDecoderAssetIdRef.current === assetId) return;
+
+    const worker = decodeWorkerRef.current;
+    const file = assetFilesRef.current.get(assetId);
+    if (!file) {
+      setDecoderMode("fallback");
+      return;
+    }
+
+    loadedDecoderAssetIdRef.current = assetId;
+    setDecoderMode(webCodecsAvailable ? "none" : "fallback");
+
+    if (!worker || !webCodecsAvailable) {
+      setDecoderMode("fallback");
+      return;
+    }
+
+    const activeAssetId = assetId;
+    void file.arrayBuffer().then((buffer) => {
+      if (loadedDecoderAssetIdRef.current !== activeAssetId) return;
+      worker.postMessage(
+        {
+          type: "load",
+          buffer,
+          mimeType: file.type || "video/mp4",
+          auditSamples: Math.max(0, Math.round(timestampAuditSamples)),
+        } satisfies DecodeWorkerInMessage,
+        [buffer],
+      );
+    });
+  }, [programAssetId, timestampAuditSamples, webCodecsAvailable]);
 
   useEffect(() => {
-    if (decoderMode !== "fallback" || isPlaying) return;
-    if (!videoUrl) return;
+    if (decoderMode !== "webcodecs" || isPlaying) return;
+    if (!programAssetId) return;
+    if (loadedDecoderAssetIdRef.current !== programAssetId) return;
+    queuePreviewSeek(programLocalPlayheadUs);
+  }, [decoderMode, isPlaying, programAssetId, programLocalPlayheadUs]);
+
+  useEffect(() => {
+    const useFallbackPreview = decoderMode !== "webcodecs";
+    if (!useFallbackPreview || isPlaying) return;
+    if (!programVideoUrl || !programClipContext) return;
 
     const video = programVideoRef.current;
     const canvas = programCanvasRef.current;
     if (!video || !canvas) return;
 
-    const targetSeconds = fromUs(playheadUs) / 1000;
+    const targetSeconds = fromUs(programLocalPlayheadUs) / 1000;
     const draw = () => drawVideoFrameOnCanvas(canvas, video);
 
     const hasRvfc =
@@ -2510,10 +2614,10 @@ export default function App() {
       video.addEventListener("seeked", onSeeked, { once: true });
       video.currentTime = Math.max(0, targetSeconds);
     }
-  }, [decoderMode, isPlaying, playheadUs, videoUrl]);
+  }, [decoderMode, isPlaying, programClipContext, programLocalPlayheadUs, programVideoUrl]);
 
   useEffect(() => {
-    if (!videoUrl || sourceIsPlaying) return;
+    if (!sourceVideoUrl || sourceIsPlaying) return;
     const video = sourceVideoRef.current;
     const canvas = sourceCanvasRef.current;
     if (!video || !canvas) return;
@@ -2540,10 +2644,10 @@ export default function App() {
       video.addEventListener("seeked", onSeeked, { once: true });
       video.currentTime = Math.max(0, targetSeconds);
     }
-  }, [sourceIsPlaying, sourceMonitorDurationMs, sourcePlayheadMs, videoUrl]);
+  }, [sourceIsPlaying, sourceMonitorDurationMs, sourcePlayheadMs, sourceVideoUrl]);
 
   useEffect(() => {
-    if (!sourceIsPlaying || !videoUrl) return;
+    if (!sourceIsPlaying || !sourceVideoUrl) return;
     const video = sourceVideoRef.current;
     const canvas = sourceCanvasRef.current;
     if (!video || !canvas) return;
@@ -2613,10 +2717,10 @@ export default function App() {
       }
       video.pause();
     };
-  }, [setLog, sourceIsPlaying, sourceMonitorDurationMs, videoUrl]);
+  }, [setLog, sourceIsPlaying, sourceMonitorDurationMs, sourceVideoUrl]);
 
   const loadAssetForPreview = async (assetId: string, file: File, url: string) => {
-    setVideoUrl(url);
+    setSourceVideoUrl(url);
     setPreviewAssetId(assetId);
     previewAssetIdRef.current = assetId;
     setActiveAssetId(assetId);
@@ -2641,6 +2745,7 @@ export default function App() {
 
     const worker = decodeWorkerRef.current;
     if (worker && webCodecsAvailable) {
+      loadedDecoderAssetIdRef.current = assetId;
       const buffer = await file.arrayBuffer();
       worker.postMessage(
         {
@@ -2754,11 +2859,12 @@ export default function App() {
 
   const onProgramMetadataLoaded = (durationMs: number, width: number, height: number) => {
     setVideoDurationMs(durationMs);
-    if (!previewAssetId) return;
+    const targetAssetId = programAssetIdRef.current;
+    if (!targetAssetId) return;
     setProjectWithNormalize((prev) => ({
       ...prev,
       assets: prev.assets.map((asset) =>
-        asset.id === previewAssetId
+        asset.id === targetAssetId
           ? {
               ...asset,
               durationMs,
@@ -2769,9 +2875,9 @@ export default function App() {
       ),
     }), { recordHistory: false });
 
-    const file = assetFilesRef.current.get(previewAssetId);
+    const file = assetFilesRef.current.get(targetAssetId);
     if (!file) return;
-    requestAssetAnalysis(previewAssetId, file, durationMs);
+    requestAssetAnalysis(targetAssetId, file, durationMs);
   };
 
   const onSourceMetadataLoaded = (durationMs: number) => {
@@ -2866,7 +2972,8 @@ export default function App() {
             programVideoRef={programVideoRef}
             sourceCanvasRef={sourceCanvasRef}
             sourceVideoRef={sourceVideoRef}
-            videoUrl={videoUrl}
+            programVideoUrl={programVideoUrl}
+            sourceVideoUrl={sourceVideoUrl}
             onProgramLoadedMetadata={onProgramMetadataLoaded}
             onSourceLoadedMetadata={onSourceMetadataLoaded}
             playheadMs={playheadMs}
