@@ -7,7 +7,12 @@ type LibraryPanelProps = {
   onTabChange: (tab: LibraryTab) => void;
   mediaContent: ReactNode;
   hasVideoAsset: boolean;
-  onRunAutoCaptions: () => void;
+  aiJobStatus: "idle" | "running" | "completed" | "failed";
+  aiSummary: string | null;
+  aiSuggestionCount: number;
+  canApplyAi: boolean;
+  onRunSilenceCut: () => void;
+  onApplyAiResult: () => void;
 };
 
 const tabs: Array<{ id: LibraryTab; label: string; icon: string; enabled: boolean }> = [
@@ -24,8 +29,22 @@ export function LibraryPanel({
   onTabChange,
   mediaContent,
   hasVideoAsset,
-  onRunAutoCaptions,
+  aiJobStatus,
+  aiSummary,
+  aiSuggestionCount,
+  canApplyAi,
+  onRunSilenceCut,
+  onApplyAiResult,
 }: LibraryPanelProps) {
+  const statusLabel =
+    aiJobStatus === "running"
+      ? "Running"
+      : aiJobStatus === "completed"
+        ? "Ready"
+        : aiJobStatus === "failed"
+          ? "Failed"
+          : "Idle";
+
   return (
     <div className="libraryPanel">
       <div className="libraryTabs" role="tablist" aria-label="Library tabs">
@@ -51,10 +70,17 @@ export function LibraryPanel({
         {activeTab === "ai" ? (
           <section className="aiPanel">
             <h2>AI</h2>
-            <p className="hint">Plugin slot</p>
-            <button type="button" onClick={onRunAutoCaptions} disabled={!hasVideoAsset}>
-              ⚡ Captions
+            <div className="aiStatusRow">
+              <span className={`aiStatusTag status-${aiJobStatus}`}>{statusLabel}</span>
+              <span className="hint">{aiSuggestionCount} suggestions</span>
+            </div>
+            <button type="button" onClick={onRunSilenceCut} disabled={!hasVideoAsset || aiJobStatus === "running"}>
+              ✂ Silence Cut
             </button>
+            <button type="button" onClick={onApplyAiResult} disabled={!canApplyAi || aiJobStatus === "running"}>
+              ✔ Apply
+            </button>
+            {aiSummary ? <p className="hint">{aiSummary}</p> : null}
             {!hasVideoAsset ? (
               <p className="hint">Upload video first</p>
             ) : null}

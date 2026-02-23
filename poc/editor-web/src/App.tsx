@@ -15,6 +15,11 @@ import { LibraryPanel } from "./components/MediaBin/LibraryPanel";
 import { DiagnosticsPanel } from "./components/Diagnostics/DiagnosticsPanel";
 import { ExportModal } from "./components/Export/ExportModal";
 import { analyzeMediaFile } from "./preview/media-analysis";
+import {
+  runSilenceCutPlugin,
+  type SilenceCutPluginInput,
+  type SilenceCutPluginOutput,
+} from "./ai/silenceCutPlugin";
 
 type TrackKind = "video" | "overlay" | "audio";
 
@@ -235,6 +240,8 @@ type ExportJobState = {
   outputUrl?: string;
   error?: string;
 };
+
+type AiJobStatus = "idle" | "running" | "completed" | "failed";
 
 type AnalysisWorkerInMessage = {
   type: "analyze";
@@ -679,6 +686,9 @@ export default function App() {
   const [exportPreset, setExportPreset] = useState<ExportPreset>("1080p");
   const [exportFps, setExportFps] = useState<ExportFps>(30);
   const [exportValidationMessage, setExportValidationMessage] = useState<string | null>(null);
+  const [aiJobStatus, setAiJobStatus] = useState<AiJobStatus>("idle");
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiLastOutput, setAiLastOutput] = useState<SilenceCutPluginOutput | null>(null);
 
   const dragRef = useRef<DragState | null>(null);
   const dragRafRef = useRef<number | null>(null);
@@ -692,6 +702,7 @@ export default function App() {
   const analysisCacheRef = useRef<Map<string, AssetAnalysisCacheValue>>(new Map());
   const assetAnalysisKeyRef = useRef<Map<string, string>>(new Map());
   const exportPollTimerRef = useRef<number | null>(null);
+  const aiRunTokenRef = useRef(0);
 
   const decodeWorkerRef = useRef<Worker | null>(null);
   const loadedDecoderAssetIdRef = useRef<string | null>(null);
@@ -1510,6 +1521,10 @@ export default function App() {
   const removeTrack = (trackId: string) => {
     const target = project.timeline.tracks.find((track) => track.id === trackId);
     if (!target) return;
+    if (target.locked) {
+      setLog("Track is locked.");
+      return;
+    }
     if (project.timeline.tracks.length <= 1) {
       setLog("At least one track must remain.");
       return;
@@ -1559,13 +1574,115 @@ export default function App() {
     });
   };
 
-  const runAutoCaptionsPlaceholder = () => {
+  const runSilenceCutAiPlugin = async () => {
     const hasVideo = project.assets.some((asset) => asset.kind === "video");
     if (!hasVideo) {
-      setLog("Auto captions requires at least one video asset.");
+      setLog("Silence cut requires at least one video asset.");
       return;
     }
-    setLog("Auto captions placeholder executed. Wire AI job contract next.");
+    const normalized = normalizeProject(project);
+    const input: SilenceCutPluginInput = {
+      projectId: normalized.meta.projectId,
+      tracks: normalized.timeline.tracks.map((track) => ({
+        id: track.id,
+        kind: track.kind,
+        locked: track.locked,
+        clips: track.clips.map((clip) => ({
+          id: clip.id,
+          label: clip.label,
+          assetId: clip.assetId,
+          startMs: clip.startMs,
+          durationMs: clip.durationMs,
+          inMs: clip.inMs,
+          outMs: clip.outMs,
+        })),
+      })),
+      assets: normalized.assets.map((asset) => ({
+        id: asset.id,
+        kind: asset.kind,
+        durationMs: asset.durationMs,
+        waveform: asset.waveform,
+      })),
+      params: {
+        threshold: 0.12,
+        minSilenceMs: 240,
+        minKeepMs: 450,
+      },
+    };
+
+    const runToken = aiRunTokenRef.current + 1;
+    aiRunTokenRef.current = runToken;
+    setAiJobStatus("running");
+    setAiSummary("Analyzing clip edges for silence...");
+    setAiLastOutput(null);
+    setLog("AI plugin started: silence-cut-v1");
+
+    try {
+      const output = await runSilenceCutPlugin(input);
+      if (aiRunTokenRef.current !== runToken) return;
+      setAiJobStatus("completed");
+      setAiSummary(output.summary);
+      setAiLastOutput(output);
+      setLog(`AI plugin completed: ${output.summary}`);
+    } catch (error) {
+      if (aiRunTokenRef.current !== runToken) return;
+      const message = error instanceof Error ? error.message : String(error);
+      setAiJobStatus("failed");
+      setAiSummary(`Plugin failed: ${message}`);
+      setAiLastOutput(null);
+      setLog(`AI plugin failed: ${message}`);
+    }
+  };
+
+  const applySilenceCutResult = () => {
+    const output = aiLastOutput;
+    if (!output) {
+      setLog("No AI result to apply.");
+      return;
+    }
+    if (output.clipPatches.length === 0) {
+      setLog("No silence trims to apply.");
+      return;
+    }
+
+    const applicablePatches = output.clipPatches.filter((patch) => !isTrackLocked(project, patch.trackId));
+    if (applicablePatches.length === 0) {
+      setLog("All suggested clips are on locked tracks.");
+      return;
+    }
+    const patchMap = new Map(applicablePatches.map((patch) => [`${patch.trackId}:${patch.clipId}`, patch]));
+    const firstApplied = applicablePatches[0]
+      ? { trackId: applicablePatches[0].trackId, clipId: applicablePatches[0].clipId }
+      : null;
+    const appliedCount = applicablePatches.length;
+
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.map((track) => {
+        if (track.locked) return track;
+        let changed = false;
+        const clips = track.clips.map((clip) => {
+          const patch = patchMap.get(`${track.id}:${clip.id}`);
+          if (!patch) return clip;
+          changed = true;
+          return sanitizeClip({
+            ...clip,
+            startMs: patch.startMs,
+            durationMs: patch.durationMs,
+            inMs: patch.inMs,
+            outMs: patch.outMs,
+          });
+        });
+        return changed ? { ...track, clips: sortClips(clips) } : track;
+      });
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+
+    if (firstApplied) {
+      setSelection(firstApplied);
+      setSelectedClipKeys([clipKey(firstApplied.trackId, firstApplied.clipId)]);
+    }
+    setAiSummary(`Applied silence cut to ${appliedCount} clip(s).`);
+    setLog(`Applied AI result: silence-cut-v1 (${appliedCount} clip(s)).`);
   };
 
   const updateSelectedTiming = (patch: Partial<Pick<Clip, "startMs" | "durationMs" | "inMs" | "outMs">>) => {
@@ -1624,6 +1741,9 @@ export default function App() {
       historyRef.current = { undo: [], redo: [] };
       setSelection(null);
       setSelectedClipKeys([]);
+      setAiJobStatus("idle");
+      setAiSummary(null);
+      setAiLastOutput(null);
       setLog("Project loaded from local storage.");
     } catch {
       setLog("Saved project is invalid JSON.");
@@ -2977,6 +3097,9 @@ export default function App() {
     }));
 
     requestAssetAnalysis(assetId, file, 0);
+    setAiJobStatus("idle");
+    setAiSummary(null);
+    setAiLastOutput(null);
 
     await loadAssetForPreview(assetId, file, url);
     setLog(`Loaded media asset: ${file.name}`);
@@ -3126,6 +3249,8 @@ export default function App() {
   const timelineStatus = `Ready | Selected: ${selectedClipCount} | Ripple: ${rippleMode}`;
   const diagnosticsEnabled = devMode && diagnosticsVisible;
   const exportCanStart = canStartExport();
+  const aiSuggestionCount = aiLastOutput?.suggestions.length ?? 0;
+  const canApplyAiResult = aiJobStatus === "completed" && (aiLastOutput?.clipPatches.length ?? 0) > 0;
   const timelineAssetMap = useMemo(() => new Map(project.assets.map((asset) => [asset.id, asset])), [project.assets]);
 
   return (
@@ -3154,7 +3279,14 @@ export default function App() {
             activeTab={libraryTab}
             onTabChange={setLibraryTab}
             hasVideoAsset={project.assets.some((asset) => asset.kind === "video")}
-            onRunAutoCaptions={runAutoCaptionsPlaceholder}
+            aiJobStatus={aiJobStatus}
+            aiSummary={aiSummary}
+            aiSuggestionCount={aiSuggestionCount}
+            canApplyAi={canApplyAiResult}
+            onRunSilenceCut={() => {
+              void runSilenceCutAiPlugin();
+            }}
+            onApplyAiResult={applySilenceCutResult}
             mediaContent={(
               <MediaBinPanel
                 assets={project.assets}

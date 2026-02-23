@@ -51,6 +51,9 @@
             "properties": {
               "id": { "type": "string" },
               "kind": { "enum": ["video", "overlay", "audio"] },
+              "muted": { "type": "boolean" },
+              "locked": { "type": "boolean" },
+              "visible": { "type": "boolean" },
               "clips": {
                 "type": "array",
                 "items": {
