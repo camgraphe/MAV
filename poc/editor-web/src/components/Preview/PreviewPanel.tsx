@@ -1,10 +1,13 @@
 import type { RefObject } from "react";
 
 type PreviewPanelProps = {
-  canvasRef: RefObject<HTMLCanvasElement | null>;
-  fallbackVideoRef: RefObject<HTMLVideoElement | null>;
+  programCanvasRef: RefObject<HTMLCanvasElement | null>;
+  programVideoRef: RefObject<HTMLVideoElement | null>;
+  sourceCanvasRef: RefObject<HTMLCanvasElement | null>;
+  sourceVideoRef: RefObject<HTMLVideoElement | null>;
   videoUrl: string | null;
-  onLoadedMetadata: (durationMs: number, width: number, height: number) => void;
+  onProgramLoadedMetadata: (durationMs: number, width: number, height: number) => void;
+  onSourceLoadedMetadata: (durationMs: number) => void;
   playheadMs: number;
   durationMs: number;
   isPlaying: boolean;
@@ -17,24 +20,22 @@ type PreviewPanelProps = {
   markOutMs: number | null;
   onSetMarkIn: () => void;
   onSetMarkOut: () => void;
+  sourcePlayheadMs: number;
+  sourceDurationMs: number;
+  sourceIsPlaying: boolean;
+  onSourceTogglePlay: () => void;
+  onSourceScrub: (nextMs: number) => void;
+  onSourceStepFrame: (direction: "forward" | "backward") => void;
 };
 
-function formatTimecode(ms: number) {
-  const safe = Math.max(0, Math.round(ms));
-  const totalSeconds = Math.floor(safe / 1000);
-  const mins = Math.floor(totalSeconds / 60)
-    .toString()
-    .padStart(2, "0");
-  const secs = (totalSeconds % 60).toString().padStart(2, "0");
-  const millis = (safe % 1000).toString().padStart(3, "0");
-  return `${mins}:${secs}.${millis}`;
-}
-
 export function PreviewPanel({
-  canvasRef,
-  fallbackVideoRef,
+  programCanvasRef,
+  programVideoRef,
+  sourceCanvasRef,
+  sourceVideoRef,
   videoUrl,
-  onLoadedMetadata,
+  onProgramLoadedMetadata,
+  onSourceLoadedMetadata,
   playheadMs,
   durationMs,
   isPlaying,
@@ -47,74 +48,121 @@ export function PreviewPanel({
   markOutMs,
   onSetMarkIn,
   onSetMarkOut,
+  sourcePlayheadMs,
+  sourceDurationMs,
+  sourceIsPlaying,
+  onSourceTogglePlay,
+  onSourceScrub,
+  onSourceStepFrame,
 }: PreviewPanelProps) {
   const maxDuration = Math.max(1000, durationMs);
+  const sourceMaxDuration = Math.max(1000, sourceDurationMs);
 
   return (
     <div className="previewPanel">
-      <div className="panelHeader">
-        <h2>Player</h2>
+      <div className="previewMonitors">
+        <section className="monitorCard">
+          <header className="monitorHeader">
+            <h3>Source</h3>
+          </header>
+          <div className="previewStage">
+            <canvas ref={sourceCanvasRef} width={960} height={540} className="previewCanvas" />
+          </div>
+          <div className="sourceControls">
+            <div className="playerButtons">
+              <button type="button" className="iconBtn" title="Previous source frame" onClick={() => onSourceStepFrame("backward")}>
+                ◀
+              </button>
+              <button type="button" className="iconBtn iconBtnStrong" title="Play/pause source" onClick={onSourceTogglePlay}>
+                {sourceIsPlaying ? "❚❚" : "▶"}
+              </button>
+              <button type="button" className="iconBtn" title="Next source frame" onClick={() => onSourceStepFrame("forward")}>
+                ▶
+              </button>
+            </div>
+            <div className="playerScrubRow">
+              <input
+                type="range"
+                min={0}
+                max={sourceMaxDuration}
+                value={Math.min(sourceMaxDuration, Math.max(0, sourcePlayheadMs))}
+                onChange={(event) => onSourceScrub(Number(event.target.value))}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="monitorCard">
+          <header className="monitorHeader">
+            <h3>Program</h3>
+          </header>
+          <div className="previewStage">
+            <canvas ref={programCanvasRef} width={960} height={540} className="previewCanvas" />
+          </div>
+          <div className="playerControls">
+            <div className="playerButtons">
+              <button type="button" className="iconBtn" title="Previous frame (J / ←)" onClick={() => onStepFrame("backward")}>
+                ◀
+              </button>
+              <button type="button" className="iconBtn iconBtnStrong" title="Play/Pause (Space/K)" onClick={onTogglePlay}>
+                {isPlaying ? "❚❚" : "▶"}
+              </button>
+              <button type="button" className="iconBtn" title="Next frame (L / →)" onClick={() => onStepFrame("forward")}>
+                ▶
+              </button>
+              <button
+                type="button"
+                className={`iconBtn ${loopEnabled ? "activeTool" : ""}`}
+                title="Loop playback"
+                onClick={onLoopToggle}
+              >
+                ↺
+              </button>
+              <button type="button" className="iconBtn" title="Mark in (I)" onClick={onSetMarkIn}>
+                I
+              </button>
+              <button type="button" className="iconBtn" title="Mark out (O)" onClick={onSetMarkOut}>
+                O
+              </button>
+            </div>
+
+            <div className="playerScrubRow">
+              <input
+                type="range"
+                min={0}
+                max={maxDuration}
+                value={Math.min(maxDuration, Math.max(0, playheadMs))}
+                onChange={(event) => onScrub(Number(event.target.value))}
+              />
+            </div>
+          </div>
+        </section>
       </div>
 
-      <canvas ref={canvasRef} width={960} height={540} className="previewCanvas" />
-
       <video
-        ref={fallbackVideoRef}
+        ref={programVideoRef}
         className="hiddenVideo"
         src={videoUrl ?? undefined}
         playsInline
         preload="auto"
         onLoadedMetadata={(event) => {
-          onLoadedMetadata(
+          onProgramLoadedMetadata(
             Math.round(event.currentTarget.duration * 1000),
             event.currentTarget.videoWidth,
             event.currentTarget.videoHeight,
           );
         }}
       />
-
-      <div className="playerControls">
-        <div className="playerButtons">
-          <button type="button" onClick={() => onStepFrame("backward")}>
-            ◀ Frame
-          </button>
-          <button type="button" onClick={onTogglePlay}>
-            {isPlaying ? "Pause" : "Play"}
-          </button>
-          <button type="button" onClick={() => onStepFrame("forward")}>
-            Frame ▶
-          </button>
-          <button type="button" className={loopEnabled ? "activeTool" : ""} onClick={onLoopToggle}>
-            Loop
-          </button>
-        </div>
-
-        <div className="playerScrubRow">
-          <input
-            type="range"
-            min={0}
-            max={maxDuration}
-            value={Math.min(maxDuration, Math.max(0, playheadMs))}
-            onChange={(event) => onScrub(Number(event.target.value))}
-          />
-          <span className="timecode">
-            {formatTimecode(playheadMs)} / {formatTimecode(maxDuration)}
-          </span>
-        </div>
-
-        <div className="playerMarks">
-          <button type="button" onClick={onSetMarkIn}>
-            Mark In (I)
-          </button>
-          <button type="button" onClick={onSetMarkOut}>
-            Mark Out (O)
-          </button>
-          <span className="timecode">
-            In: {markInMs != null ? formatTimecode(markInMs) : "--:--.---"} | Out:{" "}
-            {markOutMs != null ? formatTimecode(markOutMs) : "--:--.---"}
-          </span>
-        </div>
-      </div>
+      <video
+        ref={sourceVideoRef}
+        className="hiddenVideo"
+        src={videoUrl ?? undefined}
+        playsInline
+        preload="auto"
+        onLoadedMetadata={(event) => {
+          onSourceLoadedMetadata(Math.round(event.currentTarget.duration * 1000));
+        }}
+      />
     </div>
   );
 }

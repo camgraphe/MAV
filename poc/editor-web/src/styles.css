@@ -1,71 +1,128 @@
 :root {
   color-scheme: light;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   line-height: 1.4;
+  --editor-bg: #121821;
+  --editor-surface: #1b2534;
+  --editor-border: #2b3a50;
+  --editor-text: #e5edf8;
+  --editor-muted: #9fb1ca;
+  --accent: #44a8ff;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  background: #eef2f5;
+  background: #0d1420;
   color: #12202f;
+  overflow: hidden;
 }
 
 .editorShell {
+  height: 100vh;
   min-height: 100vh;
-  padding: 12px;
+  padding: 0;
   display: grid;
-  gap: 12px;
+  gap: 0;
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) minmax(260px, 340px);
-  grid-template-rows: auto minmax(300px, 44vh) minmax(240px, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) minmax(200px, 34vh) auto auto;
   grid-template-areas:
     "top top top"
     "left center right"
     "bottom bottom bottom"
     "diag diag diag"
     "status status status";
+  background: #a5b3c4;
 }
 
 .panel {
-  background: #fff;
-  border: 1px solid #dbe1e7;
-  border-radius: 10px;
-  padding: 12px;
+  background: #182334;
+  color: #deebfd;
+  border: 1px solid #2b3d56;
+  border-radius: 0;
+  padding: 10px;
+  min-width: 0;
+  min-height: 0;
 }
 
 .editorTop {
   grid-area: top;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  background: var(--editor-surface);
+  border-color: var(--editor-border);
+  color: var(--editor-text);
 }
 
 .editorLeft {
   grid-area: left;
+  border-left: 0;
+  border-bottom: 0;
+  overflow: auto;
 }
 
 .editorCenter {
   grid-area: center;
+  border-bottom: 0;
+  border-left: 0;
+  overflow: hidden;
+  display: flex;
 }
 
 .editorRight {
   grid-area: right;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  overflow: auto;
 }
 
 .editorBottom {
   grid-area: bottom;
+  border-left: 0;
+  border-right: 0;
+  overflow: hidden;
+  display: flex;
+  background: var(--editor-surface);
+  border-color: var(--editor-border);
+  color: var(--editor-text);
 }
 
 .editorDiagnostics {
   grid-area: diag;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  max-height: 38vh;
+  overflow: auto;
 }
 
 .editorStatus {
   grid-area: status;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  border-bottom: 0;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  background: #132033;
+  color: #9fb3cd;
 }
 
 .resizablePane {
-  resize: horizontal;
+  resize: none;
   overflow: auto;
   min-width: 220px;
   max-width: 440px;
@@ -120,17 +177,20 @@ h3 {
 
 .projectNameInput span {
   font-size: 12px;
-  color: #4c6075;
+  color: #8ea3bf;
 }
 
 .projectNameInput input {
-  min-width: 200px;
+  min-width: 240px;
+  background: rgba(9, 14, 23, 0.35);
+  border-color: #374a62;
+  color: #ebf2ff;
 }
 
 .primaryBtn {
-  background: #1474c4;
+  background: linear-gradient(140deg, #2a8ddd, #16b0d6);
   color: #fff;
-  border-color: #0f66ad;
+  border-color: #2a8ddd;
 }
 
 .buttons {
@@ -140,8 +200,9 @@ h3 {
 }
 
 button {
-  border: 1px solid #b7c5d3;
-  background: #f9fbfd;
+  border: 1px solid #3c4f67;
+  background: #223247;
+  color: #e8f0fc;
   border-radius: 6px;
   padding: 6px 10px;
   cursor: pointer;
@@ -154,10 +215,57 @@ button:disabled {
 
 input,
 select {
-  border: 1px solid #b7c5d3;
+  border: 1px solid #3c4f67;
   border-radius: 6px;
   padding: 5px 8px;
-  background: #fff;
+  background: #1b2838;
+  color: #e8f0fc;
+}
+
+.editorTop button {
+  border-color: #3c4d64;
+  background: #223247;
+  color: #e8f0fc;
+}
+
+.editorTop .primaryBtn {
+  background: linear-gradient(140deg, #2a8ddd, #16b0d6);
+  border-color: #2a8ddd;
+}
+
+.editorTop input,
+.editorTop select {
+  border-color: #3c4d64;
+  background: #1b2838;
+  color: #f0f5ff;
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.iconBtnStrong {
+  min-width: 42px;
+}
+
+.iconBtnWithLabel {
+  gap: 6px;
+  padding: 0 10px;
+}
+
+.iconBtn.tiny {
+  min-width: 24px;
+  height: 24px;
+  font-size: 13px;
+  padding: 0 6px;
 }
 
 .toggles {
@@ -184,19 +292,24 @@ select {
 }
 
 .libraryTabs {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
 .libraryTabs button {
-  padding: 5px 9px;
+  padding: 6px 7px;
   font-size: 12px;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
 }
 
 .libraryTabs .activeLibraryTab {
-  background: #e6f2ff;
-  border-color: #4b93d1;
+  background: #23405f;
+  border-color: #4ba8ff;
+  color: #eef6ff;
 }
 
 .libraryContent {
@@ -221,10 +334,10 @@ select {
 }
 
 .assetEmptyState {
-  border: 1px dashed #c6d6e7;
+  border: 1px dashed #3d5471;
   border-radius: 8px;
   padding: 10px;
-  background: #f8fbff;
+  background: #152236;
 }
 
 .assetCard {
@@ -236,15 +349,16 @@ select {
     "thumb strip"
     "thumb wave";
   gap: 6px 8px;
-  border: 1px solid #d7dee7;
+  border: 1px solid #324961;
   border-radius: 8px;
   padding: 8px;
   cursor: grab;
+  background: #152236;
 }
 
 .assetCard.active {
-  border-color: #2d84ce;
-  background: #f0f8ff;
+  border-color: #4bb4ff;
+  background: #1b2f47;
 }
 
 .assetThumb {
@@ -253,9 +367,9 @@ select {
   place-items: center;
   border-radius: 6px;
   font-size: 11px;
-  color: #2f4359;
-  border: 1px solid #c8d6e5;
-  background: linear-gradient(160deg, #edf4fb, #dbeafb);
+  color: #d5e8ff;
+  border: 1px solid #415a77;
+  background: linear-gradient(160deg, #24374f, #1b2a3d);
 }
 
 .assetMeta {
@@ -273,12 +387,12 @@ select {
 }
 
 .assetMeta span {
-  color: #546a7f;
+  color: #9bb0ca;
   font-size: 12px;
 }
 
 .assetHint {
-  color: #2d6aa1;
+  color: #72bfff;
   font-weight: 500;
 }
 
@@ -300,7 +414,7 @@ select {
   height: 24px;
   object-fit: cover;
   border-radius: 4px;
-  border: 1px solid #d4dee8;
+  border: 1px solid #3a506b;
 }
 
 .assetWaveform {
@@ -319,27 +433,92 @@ select {
 
 .previewCanvas {
   width: 100%;
-  max-height: 420px;
-  border-radius: 8px;
-  border: 1px solid #dde5ee;
+  max-height: 100%;
+  max-width: 100%;
+  height: auto;
+  border: 0;
+  border-radius: 0;
   background: #111;
+  display: block;
 }
 
 .previewPanel {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   gap: 10px;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+
+.previewMonitors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-height: 0;
+}
+
+.monitorCard {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  min-height: 0;
+}
+
+.monitorHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.monitorHeader h3 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #9fb3cd;
+}
+
+.previewStage {
+  min-height: 0;
+  border: 1px solid #32445f;
+  border-radius: 8px;
+  background: #0b1119;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.sourceControls {
+  display: grid;
+  gap: 8px;
+  background: #141f2d;
+  border: 1px solid #2c3f58;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.sourceControls button {
+  border-color: #39516f;
+  background: #1f2f45;
+  color: #e6f0fe;
 }
 
 .playerControls {
   display: grid;
   gap: 8px;
+  background: #141f2d;
+  border: 1px solid #2c3f58;
+  border-radius: 8px;
+  padding: 8px;
 }
 
 .playerButtons {
   display: flex;
   gap: 8px;
   align-items: center;
-  flex-wrap: wrap;
+  justify-content: center;
+  flex-wrap: nowrap;
 }
 
 .playerScrubRow {
@@ -347,38 +526,26 @@ select {
   gap: 6px;
 }
 
-.playerMarks {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
 .playerScrubRow input[type="range"] {
   width: 100%;
-}
-
-.playerMarks .timecode {
-  margin-left: auto;
 }
 
 .playerButtons button:nth-child(2) {
   min-width: 88px;
 }
 
-.playerButtons button,
-.playerMarks button {
-  padding: 6px 10px;
+.playerButtons button {
+  padding: 0;
+}
+
+.playerControls button {
+  border-color: #39516f;
+  background: #1f2f45;
+  color: #e6f0fe;
 }
 
 .playerControls input[type="range"] {
   width: 100%;
-}
-
-.timecode {
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  color: #3d5369;
 }
 
 .hiddenVideo {
@@ -391,7 +558,10 @@ select {
 
 .timelinePanel {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 8px;
+  min-height: 0;
+  width: 100%;
 }
 
 .timelineToolbar {
@@ -399,6 +569,23 @@ select {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  background: #141f2d;
+  border: 1px solid #2c3f58;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.timelineToolbar button {
+  border-color: #3b5270;
+  background: #1f3148;
+  color: #e4f0ff;
+}
+
+.timelineToolbar select,
+.timelineToolbar input {
+  border-color: #3b5270;
+  background: #152438;
+  color: #e6effb;
 }
 
 .timelineToolbarGroup {
@@ -415,11 +602,21 @@ select {
   font-size: 12px;
 }
 
+.compactLabel {
+  color: #9eb3cd;
+}
+
+.compactLabel span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 .zoomControl {
-  border: 1px solid #d8e0e9;
+  border: 1px solid #32445f;
   border-radius: 8px;
   padding: 4px 6px;
-  background: #f8fbff;
+  background: #1a2a3e;
 }
 
 .zoomControl input[type="range"] {
@@ -427,8 +624,17 @@ select {
 }
 
 .zoomControl button {
-  padding: 3px 8px;
+  padding: 0 8px;
   min-width: 28px;
+}
+
+.zoomPreset {
+  height: 24px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid #3e546f;
+  background: #25354b;
+  color: #dce9fb;
 }
 
 .timelineToolbarGroup input[type="number"] {
@@ -436,8 +642,9 @@ select {
 }
 
 .activeTool {
-  background: #e6f2ff;
-  border-color: #4b93d1;
+  background: #254566 !important;
+  border-color: #58b3ff !important;
+  color: #eef7ff !important;
 }
 
 .timelineHint {
@@ -446,8 +653,58 @@ select {
 
 .timelineScroller {
   overflow-x: auto;
-  border: 1px solid #dfe5ec;
+  overflow-y: auto;
+  border: 1px solid #2f3f55;
   border-radius: 8px;
+  min-height: 0;
+}
+
+.timelineWorkspace {
+  position: relative;
+  display: grid;
+  grid-template-columns: 156px minmax(0, 1fr);
+}
+
+.trackColumn {
+  position: sticky;
+  left: 0;
+  z-index: 12;
+  background: #111d2d;
+  border-right: 1px solid #344862;
+}
+
+.trackColumnHeader {
+  height: 34px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #2f3f55;
+  font-size: 12px;
+  color: #9fb3cd;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.trackAddActions {
+  display: flex;
+  gap: 4px;
+}
+
+.trackHeaderRow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: 7px 8px;
+  border-bottom: 1px solid #2b3c54;
+  display: grid;
+  gap: 5px;
+  background: linear-gradient(180deg, rgba(20, 34, 52, 0.95), rgba(16, 27, 41, 0.95));
+}
+
+.trackHeaderRow strong {
+  font-size: 12px;
+  color: #d2e3f9;
 }
 
 .timelineCanvas {
@@ -456,23 +713,21 @@ select {
   padding-bottom: 2px;
 }
 
+.timelineLanes {
+  margin-top: 0;
+}
+
 .timelineCanvas.dropActive {
   outline: 2px dashed #2d84ce;
   outline-offset: -4px;
 }
 
 .timelineCanvas.filmstripOn {
-  background: repeating-linear-gradient(
-    to right,
-    #fafbfc,
-    #fafbfc 39px,
-    #f0f3f6 39px,
-    #f0f3f6 40px
-  );
+  background: #162233;
 }
 
 .timelineCanvas.filmstripOff {
-  background: #f8fafc;
+  background: #162233;
 }
 
 .playhead {
@@ -482,6 +737,27 @@ select {
   width: 2px;
   background: #e34141;
   z-index: 5;
+  cursor: ew-resize;
+}
+
+.playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -6px;
+  right: -6px;
+}
+
+.playhead::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 10px;
+  height: 8px;
+  border-radius: 0 0 6px 6px;
+  background: #ff4f4f;
 }
 
 .snapGuide {
@@ -500,12 +776,12 @@ select {
   transform: translate(-50%, -50%);
   width: min(520px, calc(100% - 24px));
   text-align: center;
-  color: #4f6479;
+  color: #b5c8de;
   font-size: 13px;
-  border: 1px dashed #c6d6e7;
+  border: 1px dashed #4a6381;
   border-radius: 10px;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.86);
+  background: rgba(24, 40, 59, 0.88);
 }
 
 .timelineDropState {
@@ -525,40 +801,26 @@ select {
   position: absolute;
   left: 0;
   right: 0;
-  height: 48px;
-  border-bottom: 1px solid #e8edf2;
-  padding-left: 124px;
-}
-
-.trackHeader {
-  position: absolute;
-  left: 8px;
-  top: 6px;
-  width: 108px;
-  color: #3d5369;
-  font-size: 12px;
-  display: grid;
-  gap: 4px;
-}
-
-.trackHeader strong {
-  font-size: 11px;
-  font-weight: 600;
+  height: 60px;
+  border-bottom: 1px solid #2b3c54;
 }
 
 .trackHeaderActions {
   display: flex;
   gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .trackHeaderActions button {
-  padding: 1px 5px;
+  padding: 0;
   font-size: 10px;
 }
 
 .activeTrackBtn {
-  background: #d9ecff;
-  border-color: #4b93d1;
+  background: #23405f;
+  border-color: #4ba8ff;
+  color: #eef7ff;
 }
 
 .clipBlock {
@@ -566,8 +828,8 @@ select {
   top: 10px;
   height: 30px;
   border-radius: 8px;
-  border: 1px solid #7aa9d7;
-  background: #e8f3ff;
+  border: 1px solid #4e7eb0;
+  background: #2b6ea8;
   font-size: 12px;
   display: flex;
   align-items: center;
@@ -581,8 +843,8 @@ select {
 }
 
 .clipBlock.selected {
-  background: #d0ecff;
-  border-color: #2d84ce;
+  background: #3384c9;
+  border-color: #5fc2ff;
 }
 
 .clipBlock.primary {
@@ -601,15 +863,16 @@ select {
   white-space: nowrap;
   position: relative;
   z-index: 2;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  color: #f3f7fd;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.24);
 }
 
 .clipHandle {
   width: 10px;
   height: 22px;
   border-radius: 3px;
-  border: 1px solid #4d6f92;
-  background: #f5fbff;
+  border: 1px solid #2f4d73;
+  background: rgba(236, 245, 255, 0.8);
   opacity: 0.95;
   pointer-events: none;
   position: relative;
@@ -647,7 +910,7 @@ select {
 .clipWaveform i {
   width: 2px;
   border-radius: 2px;
-  background: linear-gradient(180deg, #8ec4ec, #2f7fbc);
+  background: linear-gradient(180deg, #d7ecff, #7fc1f3);
   display: block;
 }
 
@@ -668,14 +931,20 @@ select {
   padding: 6px;
   border-radius: 8px;
   border: 1px solid #d3dee9;
-  background: rgba(255, 255, 255, 0.98);
+  background: rgba(23, 36, 53, 0.98);
   box-shadow: 0 12px 32px rgba(11, 26, 40, 0.16);
 }
 
 .clipContextMenu button {
   text-align: left;
   padding: 6px 8px;
-  background: #fff;
+  background: #1f2f45;
+}
+
+.dangerBtn {
+  border-color: #70444a;
+  background: #3d2328;
+  color: #ffd5db;
 }
 
 .timelineStatusBar {
@@ -717,7 +986,7 @@ select {
 }
 
 .hint {
-  color: #4c6075;
+  color: #9ab0cb;
   font-size: 13px;
   margin-top: 2px;
 }
@@ -830,7 +1099,7 @@ pre {
 @media (max-width: 1100px) {
   .editorShell {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto auto auto;
+    grid-template-rows: auto minmax(220px, 34vh) minmax(240px, 1fr) minmax(220px, 34vh) minmax(220px, 38vh) auto auto;
     grid-template-areas:
       "top"
       "left"
@@ -845,6 +1114,22 @@ pre {
     resize: none;
     max-width: none;
     min-width: 0;
+  }
+
+  .editorCenter {
+    min-height: 260px;
+  }
+
+  .previewPanel {
+    grid-template-rows: minmax(180px, 1fr);
+  }
+
+  .previewMonitors {
+    grid-template-columns: 1fr;
+  }
+
+  .previewStage {
+    min-height: 180px;
   }
 
   .playerControls {

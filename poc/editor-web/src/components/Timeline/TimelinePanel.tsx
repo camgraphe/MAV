@@ -72,6 +72,8 @@ type TimelinePanelProps = {
   onSplitClip: (trackId: string, clipId: string) => void;
   onDeleteClip: (trackId: string, clipId: string) => void;
   onDuplicateClip: (trackId: string, clipId: string) => void;
+  onAddTrack: (kind: "video" | "overlay" | "audio") => void;
+  onRemoveTrack: (trackId: string) => void;
   assetMap: Map<string, AssetMeta>;
 };
 
@@ -84,10 +86,12 @@ type Marquee = {
   height: number;
 };
 
-function trackDisplayName(track: Track) {
-  if (track.kind === "video") return "Main video";
-  if (track.kind === "overlay") return "Overlay";
-  return "Audio";
+function trackDisplayName(track: Track, tracks: Track[]) {
+  const base = track.kind === "video" ? "Video" : track.kind === "overlay" ? "Overlay" : "Audio";
+  const sameKind = tracks.filter((item) => item.kind === track.kind);
+  if (sameKind.length <= 1) return base;
+  const order = sameKind.findIndex((item) => item.id === track.id) + 1;
+  return `${base} ${order}`;
 }
 
 function overlapRect(
@@ -97,8 +101,8 @@ function overlapRect(
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
-const TRACK_LABEL_WIDTH = 124;
-const LANE_HEIGHT = 56;
+const TRACK_LABEL_WIDTH = 156;
+const LANE_HEIGHT = 60;
 const CLIP_TOP = 10;
 const CLIP_HEIGHT = 30;
 
@@ -140,6 +144,8 @@ export function TimelinePanel({
   onSplitClip,
   onDeleteClip,
   onDuplicateClip,
+  onAddTrack,
+  onRemoveTrack,
   assetMap,
 }: TimelinePanelProps) {
   const selected = new Set(selectedClipKeys);
@@ -157,6 +163,7 @@ export function TimelinePanel({
     startX: number;
     startY: number;
   } | null>(null);
+  const playheadDragRef = useRef<{ pointerId: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const hasAnyClip = tracks.some((track) => track.clips.length > 0);
   const timelineHeight = Math.max(180, tracks.length * LANE_HEIGHT + 8);
@@ -166,7 +173,7 @@ export function TimelinePanel({
       track.clips.map((sourceClip) => {
         const clip = getClipRenderState(track.id, sourceClip);
         const widthPx = Math.max(24, (clip.durationMs / 1000) * pixelsPerSecond);
-        const xPx = TRACK_LABEL_WIDTH + (clip.startMs / 1000) * pixelsPerSecond;
+        const xPx = (clip.startMs / 1000) * pixelsPerSecond;
         const yPx = rowIndex * LANE_HEIGHT + CLIP_TOP;
         return {
           key: `${track.id}:${sourceClip.id}`,
@@ -222,38 +229,87 @@ export function TimelinePanel({
     onSelectClipKeys(keys, primary);
   };
 
+  const seekFromClientX = (clientX: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.min(Math.max(0, clientX - rect.left), zoomWidthPx);
+    const nextMs = Math.round((x / pixelsPerSecond) * 1000);
+    onPlayheadChange(nextMs);
+  };
+
+  useEffect(() => {
+    const onWindowPointerMove = (event: PointerEvent) => {
+      const drag = playheadDragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      seekFromClientX(event.clientX);
+    };
+
+    const stopDrag = (event: PointerEvent) => {
+      const drag = playheadDragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      playheadDragRef.current = null;
+    };
+
+    const onWindowBlur = () => {
+      playheadDragRef.current = null;
+    };
+
+    window.addEventListener("pointermove", onWindowPointerMove);
+    window.addEventListener("pointerup", stopDrag);
+    window.addEventListener("pointercancel", stopDrag);
+    window.addEventListener("blur", onWindowBlur);
+    return () => {
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", stopDrag);
+      window.removeEventListener("pointercancel", stopDrag);
+      window.removeEventListener("blur", onWindowBlur);
+    };
+  }, [pixelsPerSecond, zoomWidthPx, onPlayheadChange]);
+
   return (
     <div className="timelinePanel">
       <div className="timelineToolbar">
         <div className="timelineToolbarGroup">
           <button
             type="button"
-            className={toolMode === "select" ? "activeTool" : ""}
+            className={`iconBtn ${toolMode === "select" ? "activeTool" : ""}`}
+            title="Select tool"
             onClick={() => onToolModeChange("select")}
           >
-            Select
+            ↖
           </button>
           <button
             type="button"
-            className={toolMode === "split" ? "activeTool" : ""}
+            className={`iconBtn ${toolMode === "split" ? "activeTool" : ""}`}
+            title="Split tool"
             onClick={() => onToolModeChange("split")}
           >
-            Split Tool
+            ✂
           </button>
-          <button type="button" onClick={onUndo}>
-            Undo
+          <button type="button" className="iconBtn" title="Undo (Cmd/Ctrl+Z)" onClick={onUndo}>
+            ↶
           </button>
-          <button type="button" onClick={onRedo}>
-            Redo
+          <button type="button" className="iconBtn" title="Redo (Cmd/Ctrl+Shift+Z)" onClick={onRedo}>
+            ↷
           </button>
-          <button type="button" onClick={onSplit}>
-            Split
+          <button type="button" className="iconBtn" title="Split at playhead (S)" onClick={onSplit}>
+            ⫼
           </button>
-          <button type="button" onClick={onDelete}>
-            Delete
+          <button type="button" className="iconBtn" title="Delete selection (Del)" onClick={onDelete}>
+            ⌫
           </button>
-          <label>
-            Ripple
+          <button type="button" className="iconBtn tiny" title="Add video track" onClick={() => onAddTrack("video")}>
+            +V
+          </button>
+          <button type="button" className="iconBtn tiny" title="Add overlay track" onClick={() => onAddTrack("overlay")}>
+            +O
+          </button>
+          <button type="button" className="iconBtn tiny" title="Add audio track" onClick={() => onAddTrack("audio")}>
+            +A
+          </button>
+          <label className="compactLabel">
+            <span>Ripple</span>
             <select
               value={rippleMode}
               onChange={(event) => onRippleModeChange(event.target.value as "none" | "ripple-delete")}
@@ -265,24 +321,24 @@ export function TimelinePanel({
         </div>
 
         <div className="timelineToolbarGroup">
-          <label>
-            <input
-              type="checkbox"
-              checked={magnetEnabled}
-              onChange={(event) => onMagnetEnabledChange(event.target.checked)}
-            />
-            Main track magnet
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={snapEnabled}
-              onChange={(event) => onSnapEnabledChange(event.target.checked)}
-            />
-            Auto snap
-          </label>
-          <label>
-            Snap (ms)
+          <button
+            type="button"
+            className={`iconBtn ${magnetEnabled ? "activeTool" : ""}`}
+            title="Main track magnet"
+            onClick={() => onMagnetEnabledChange(!magnetEnabled)}
+          >
+            🧲
+          </button>
+          <button
+            type="button"
+            className={`iconBtn ${snapEnabled ? "activeTool" : ""}`}
+            title={`Snapping ${altSnapDisabled ? "temporarily disabled (Alt)" : "enabled"}`}
+            onClick={() => onSnapEnabledChange(!snapEnabled)}
+          >
+            ✢
+          </button>
+          <label className="compactLabel">
+            <span>Snap</span>
             <input
               type="number"
               min={1}
@@ -290,17 +346,17 @@ export function TimelinePanel({
               onChange={(event) => onSnapMsChange(Math.max(1, Number(event.target.value) || 1))}
             />
           </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={showFilmstrip}
-              onChange={(event) => onShowFilmstripChange(event.target.checked)}
-            />
-            Preview axis
-          </label>
+          <button
+            type="button"
+            className={`iconBtn ${showFilmstrip ? "activeTool" : ""}`}
+            title="Filmstrip preview axis"
+            onClick={() => onShowFilmstripChange(!showFilmstrip)}
+          >
+            ▦
+          </button>
           <label className="zoomControl">
-            Zoom
-            <button type="button" onClick={() => setZoom(pixelsPerSecond - 12)}>
+            <span>Zoom</span>
+            <button type="button" className="iconBtn tiny" title="Zoom out (-)" onClick={() => setZoom(pixelsPerSecond - 12)}>
               -
             </button>
             <input
@@ -310,21 +366,21 @@ export function TimelinePanel({
               value={pixelsPerSecond}
               onChange={(event) => onZoomChange(Number(event.target.value))}
             />
-            <button type="button" onClick={() => setZoom(pixelsPerSecond + 12)}>
+            <button type="button" className="iconBtn tiny" title="Zoom in (+)" onClick={() => setZoom(pixelsPerSecond + 12)}>
               +
             </button>
-            <button type="button" onClick={() => setZoom(60)}>
+            <button type="button" className="zoomPreset" onClick={() => setZoom(60)}>
               60
             </button>
-            <button type="button" onClick={() => setZoom(120)}>
+            <button type="button" className="zoomPreset" onClick={() => setZoom(120)}>
               120
             </button>
-            <button type="button" onClick={() => setZoom(180)}>
+            <button type="button" className="zoomPreset" onClick={() => setZoom(180)}>
               180
             </button>
           </label>
-          <label>
-            Placement mode
+          <label className="compactLabel">
+            <span>Placement</span>
             <select
               value={collisionMode}
               onChange={(event) => onCollisionModeChange(event.target.value as "no-overlap" | "push" | "allow-overlap")}
@@ -339,8 +395,6 @@ export function TimelinePanel({
         </div>
       </div>
 
-      <p className="hint timelineHint">Alt temporarily disables snapping ({altSnapDisabled ? "disabled" : "enabled"}).</p>
-
       <div
         className="timelineScroller"
         onWheel={(event) => {
@@ -350,198 +404,230 @@ export function TimelinePanel({
           setZoom(pixelsPerSecond + delta);
         }}
       >
-        <div
-          ref={canvasRef}
-          className={`timelineCanvas ${showFilmstrip ? "filmstripOn" : "filmstripOff"} ${dragOver ? "dropActive" : ""}`}
-          style={{ width: `${zoomWidthPx}px`, height: `${timelineHeight}px` }}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            if (event.target !== event.currentTarget) return;
-            const rect = event.currentTarget.getBoundingClientRect();
-            const localX = Math.max(0, event.clientX - rect.left - TRACK_LABEL_WIDTH);
-            const localY = Math.max(0, event.clientY - rect.top);
-            const nextMs = Math.round((localX / pixelsPerSecond) * 1000);
-            onPlayheadChange(nextMs);
-            onClearSelection();
-            marqueeRef.current = {
-              pointerId: event.pointerId,
-              startX: localX + TRACK_LABEL_WIDTH,
-              startY: localY,
-            };
-            setMarquee({
-              startX: localX + TRACK_LABEL_WIDTH,
-              startY: localY,
-              x: localX + TRACK_LABEL_WIDTH,
-              y: localY,
-              width: 0,
-              height: 0,
-            });
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={(event) => {
-            const active = marqueeRef.current;
-            if (!active || active.pointerId !== event.pointerId) return;
-            const rect = event.currentTarget.getBoundingClientRect();
-            const x = Math.max(TRACK_LABEL_WIDTH, event.clientX - rect.left);
-            const y = Math.max(0, event.clientY - rect.top);
-            const left = Math.min(active.startX, x);
-            const top = Math.min(active.startY, y);
-            const width = Math.abs(x - active.startX);
-            const height = Math.abs(y - active.startY);
-            const next = { startX: active.startX, startY: active.startY, x: left, y: top, width, height };
-            setMarquee(next);
-          }}
-          onPointerUp={(event) => {
-            const active = marqueeRef.current;
-            if (!active || active.pointerId !== event.pointerId) return;
-            marqueeRef.current = null;
-            event.currentTarget.releasePointerCapture(event.pointerId);
-            if (marquee && marquee.width > 4 && marquee.height > 4) {
-              applyMarqueeSelection(marquee);
-            }
-            setMarquee(null);
-          }}
-          onDragOver={(event) => {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "copy";
-            setDragOver(true);
-          }}
-          onDragEnter={() => setDragOver(true)}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragOver(false);
-            const assetId =
-              event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
-            if (!assetId) return;
-            const rect = event.currentTarget.getBoundingClientRect();
-            const x = Math.max(0, event.clientX - rect.left - TRACK_LABEL_WIDTH);
-            const y = Math.max(0, event.clientY - rect.top);
-            const laneIndex = Math.min(tracks.length - 1, Math.max(0, Math.floor(y / LANE_HEIGHT)));
-            const lane = tracks[laneIndex];
-            const startMs = Math.round((x / pixelsPerSecond) * 1000);
-            if (!lane) return;
-            onAssetDrop(assetId, lane.id, startMs);
-          }}
-        >
-          <div className="playhead" style={{ left: `${TRACK_LABEL_WIDTH + (playheadMs / 1000) * pixelsPerSecond}px` }} />
-          {snapGuideMs != null ? (
-            <div className="snapGuide" style={{ left: `${TRACK_LABEL_WIDTH + (snapGuideMs / 1000) * pixelsPerSecond}px` }} />
-          ) : null}
-          {!hasAnyClip ? <div className="timelineEmptyState">Drag media from the Media tab to create your first clip.</div> : null}
-          {dragOver ? <div className="timelineDropState">Drop to add clip at this position</div> : null}
-
-          {tracks.map((track, rowIndex) => {
-            const currentTrackUi = trackUi[track.id] ?? {
-              mute: false,
-              locked: false,
-              visible: true,
-            };
-
-            return (
-              <div key={track.id} className="trackLane" style={{ top: `${rowIndex * LANE_HEIGHT}px` }}>
-                <div className="trackHeader">
-                  <strong>{trackDisplayName(track)}</strong>
+        <div className="timelineWorkspace" style={{ minWidth: `${TRACK_LABEL_WIDTH + zoomWidthPx}px` }}>
+          <div className="trackColumn" style={{ width: `${TRACK_LABEL_WIDTH}px`, height: `${timelineHeight}px` }}>
+            {tracks.map((track, rowIndex) => {
+              const currentTrackUi = trackUi[track.id] ?? {
+                mute: false,
+                locked: false,
+                visible: true,
+              };
+              return (
+                <div key={`header-${track.id}`} className="trackHeaderRow" style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}>
+                  <strong>{trackDisplayName(track, tracks)}</strong>
                   <div className="trackHeaderActions">
                     <button
                       type="button"
-                      className={currentTrackUi.mute ? "activeTrackBtn" : ""}
+                      className={`iconBtn tiny ${currentTrackUi.mute ? "activeTrackBtn" : ""}`}
+                      title="Mute track"
                       onClick={() => toggleTrackFlag(track.id, "mute")}
                     >
                       M
                     </button>
                     <button
                       type="button"
-                      className={currentTrackUi.locked ? "activeTrackBtn" : ""}
+                      className={`iconBtn tiny ${currentTrackUi.locked ? "activeTrackBtn" : ""}`}
+                      title="Lock track"
                       onClick={() => toggleTrackFlag(track.id, "locked")}
                     >
                       L
                     </button>
                     <button
                       type="button"
-                      className={currentTrackUi.visible ? "activeTrackBtn" : ""}
+                      className={`iconBtn tiny ${currentTrackUi.visible ? "activeTrackBtn" : ""}`}
+                      title="Toggle visibility"
                       onClick={() => toggleTrackFlag(track.id, "visible")}
                     >
                       V
                     </button>
+                    <button type="button" className="iconBtn tiny dangerBtn" title="Remove track" onClick={() => onRemoveTrack(track.id)}>
+                      −
+                    </button>
                   </div>
                 </div>
+              );
+            })}
+          </div>
 
-                {track.clips.map((sourceClip) => {
-                  const clip = getClipRenderState(track.id, sourceClip);
-                  const asset = assetMap.get(sourceClip.assetId);
-                  const widthPx = Math.max(24, (clip.durationMs / 1000) * pixelsPerSecond);
-                  const isSelected = selected.has(`${track.id}:${sourceClip.id}`);
-                  const isPrimary = selection?.trackId === track.id && selection?.clipId === sourceClip.id;
-                  const filmstripTiles = asset?.thumbnails ?? [];
-                  const tileCount = Math.max(1, Math.ceil(widthPx / 42));
-                  const waveform = asset?.waveform ?? [];
-                  const isAudioClip = track.kind === "audio" || asset?.kind === "audio";
-
-                  return (
-                    <button
-                      key={sourceClip.id}
-                      type="button"
-                      className={`clipBlock ${isSelected ? "selected" : ""} ${isPrimary ? "primary" : ""}`}
-                      style={{
-                        left: `${(clip.startMs / 1000) * pixelsPerSecond}px`,
-                        width: `${widthPx}px`,
-                        opacity: currentTrackUi.visible ? 1 : 0.25,
-                      }}
-                      disabled={currentTrackUi.locked}
-                      onPointerDown={(event) => {
-                        event.stopPropagation();
-                        onClipPointerDown(event, track.id, sourceClip);
-                      }}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        setContextMenu({
-                          x: event.clientX,
-                          y: event.clientY,
-                          trackId: track.id,
-                          clipId: sourceClip.id,
-                        });
-                      }}
-                    >
-                      {showFilmstrip && track.kind === "video" && filmstripTiles.length > 0 ? (
-                        <span className="clipFilmstrip" aria-hidden>
-                          {Array.from({ length: tileCount }).map((_, index) => (
-                            <img
-                              key={`${sourceClip.id}-thumb-${index}`}
-                              src={filmstripTiles[index % filmstripTiles.length]}
-                              alt=""
-                            />
-                          ))}
-                        </span>
-                      ) : null}
-                      {isAudioClip && waveform.length > 0 ? (
-                        <span className="clipWaveform" aria-hidden>
-                          {waveform.slice(0, 90).map((value, index) => (
-                            <i key={`${sourceClip.id}-wave-${index}`} style={{ height: `${Math.max(4, value * 24)}px` }} />
-                          ))}
-                        </span>
-                      ) : null}
-                      <span className="clipHandle left" />
-                      <span className="clipLabel">{clip.label}</span>
-                      <span className="clipHandle right" />
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
-
-          {marquee ? (
+          <div
+            ref={canvasRef}
+            className={`timelineCanvas timelineLanes ${showFilmstrip ? "filmstripOn" : "filmstripOff"} ${dragOver ? "dropActive" : ""}`}
+            style={{ width: `${zoomWidthPx}px`, height: `${timelineHeight}px` }}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              const target = event.target;
+              if (target instanceof HTMLElement && target.closest(".clipBlock")) {
+                return;
+              }
+              const rect = event.currentTarget.getBoundingClientRect();
+              const localX = Math.max(0, event.clientX - rect.left);
+              const localY = Math.max(0, event.clientY - rect.top);
+              const nextMs = Math.round((localX / pixelsPerSecond) * 1000);
+              onPlayheadChange(nextMs);
+              onClearSelection();
+              marqueeRef.current = {
+                pointerId: event.pointerId,
+                startX: localX,
+                startY: localY,
+              };
+              setMarquee({
+                startX: localX,
+                startY: localY,
+                x: localX,
+                y: localY,
+                width: 0,
+                height: 0,
+              });
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              const active = marqueeRef.current;
+              if (!active || active.pointerId !== event.pointerId) return;
+              const rect = event.currentTarget.getBoundingClientRect();
+              const x = Math.max(0, event.clientX - rect.left);
+              const y = Math.max(0, event.clientY - rect.top);
+              const left = Math.min(active.startX, x);
+              const top = Math.min(active.startY, y);
+              const width = Math.abs(x - active.startX);
+              const height = Math.abs(y - active.startY);
+              const next = { startX: active.startX, startY: active.startY, x: left, y: top, width, height };
+              setMarquee(next);
+            }}
+            onPointerUp={(event) => {
+              const active = marqueeRef.current;
+              if (!active || active.pointerId !== event.pointerId) return;
+              marqueeRef.current = null;
+              event.currentTarget.releasePointerCapture(event.pointerId);
+              if (marquee && marquee.width > 4 && marquee.height > 4) {
+                applyMarqueeSelection(marquee);
+              }
+              setMarquee(null);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+              setDragOver(true);
+            }}
+            onDragEnter={() => setDragOver(true)}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragOver(false);
+              const assetId =
+                event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
+              if (!assetId) return;
+              const rect = event.currentTarget.getBoundingClientRect();
+              const x = Math.max(0, event.clientX - rect.left);
+              const y = Math.max(0, event.clientY - rect.top);
+              const laneIndex = Math.min(tracks.length - 1, Math.max(0, Math.floor(y / LANE_HEIGHT)));
+              const lane = tracks[laneIndex];
+              const startMs = Math.round((x / pixelsPerSecond) * 1000);
+              if (!lane) return;
+              onAssetDrop(assetId, lane.id, startMs);
+            }}
+          >
             <div
-              className="timelineMarquee"
-              style={{
-                left: `${marquee.x}px`,
-                top: `${marquee.y}px`,
-                width: `${marquee.width}px`,
-                height: `${marquee.height}px`,
+              className="playhead"
+              style={{ left: `${(playheadMs / 1000) * pixelsPerSecond}px` }}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                event.stopPropagation();
+                playheadDragRef.current = { pointerId: event.pointerId };
+                seekFromClientX(event.clientX);
               }}
             />
-          ) : null}
+            {snapGuideMs != null ? (
+              <div className="snapGuide" style={{ left: `${(snapGuideMs / 1000) * pixelsPerSecond}px` }} />
+            ) : null}
+            {!hasAnyClip ? <div className="timelineEmptyState">Drag media from the Media tab to create your first clip.</div> : null}
+            {dragOver ? <div className="timelineDropState">Drop to add clip at this position</div> : null}
+
+            {tracks.map((track, rowIndex) => {
+              const currentTrackUi = trackUi[track.id] ?? {
+                mute: false,
+                locked: false,
+                visible: true,
+              };
+
+              return (
+                <div key={track.id} className="trackLane" style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}>
+                  {track.clips.map((sourceClip) => {
+                    const clip = getClipRenderState(track.id, sourceClip);
+                    const asset = assetMap.get(sourceClip.assetId);
+                    const widthPx = Math.max(24, (clip.durationMs / 1000) * pixelsPerSecond);
+                    const isSelected = selected.has(`${track.id}:${sourceClip.id}`);
+                    const isPrimary = selection?.trackId === track.id && selection?.clipId === sourceClip.id;
+                    const filmstripTiles = asset?.thumbnails ?? [];
+                    const tileCount = Math.max(1, Math.ceil(widthPx / 42));
+                    const waveform = asset?.waveform ?? [];
+                    const isAudioClip = track.kind === "audio" || asset?.kind === "audio";
+
+                    return (
+                      <button
+                        key={sourceClip.id}
+                        type="button"
+                        className={`clipBlock ${isSelected ? "selected" : ""} ${isPrimary ? "primary" : ""}`}
+                        style={{
+                          left: `${(clip.startMs / 1000) * pixelsPerSecond}px`,
+                          width: `${widthPx}px`,
+                          opacity: currentTrackUi.visible ? 1 : 0.25,
+                        }}
+                        disabled={currentTrackUi.locked}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          onClipPointerDown(event, track.id, sourceClip);
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          setContextMenu({
+                            x: event.clientX,
+                            y: event.clientY,
+                            trackId: track.id,
+                            clipId: sourceClip.id,
+                          });
+                        }}
+                      >
+                        {showFilmstrip && track.kind === "video" && filmstripTiles.length > 0 ? (
+                          <span className="clipFilmstrip" aria-hidden>
+                            {Array.from({ length: tileCount }).map((_, index) => (
+                              <img
+                                key={`${sourceClip.id}-thumb-${index}`}
+                                src={filmstripTiles[index % filmstripTiles.length]}
+                                alt=""
+                              />
+                            ))}
+                          </span>
+                        ) : null}
+                        {isAudioClip && waveform.length > 0 ? (
+                          <span className="clipWaveform" aria-hidden>
+                            {waveform.slice(0, 90).map((value, index) => (
+                              <i key={`${sourceClip.id}-wave-${index}`} style={{ height: `${Math.max(4, value * 24)}px` }} />
+                            ))}
+                          </span>
+                        ) : null}
+                        <span className="clipHandle left" />
+                        <span className="clipLabel">{clip.label}</span>
+                        <span className="clipHandle right" />
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+
+            {marquee ? (
+              <div
+                className="timelineMarquee"
+                style={{
+                  left: `${marquee.x}px`,
+                  top: `${marquee.y}px`,
+                  width: `${marquee.width}px`,
+                  height: `${marquee.height}px`,
+                }}
+              />
+            ) : null}
+          </div>
         </div>
       </div>
 

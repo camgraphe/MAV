@@ -10,13 +10,13 @@ type LibraryPanelProps = {
   onRunAutoCaptions: () => void;
 };
 
-const tabs: Array<{ id: LibraryTab; label: string; enabled: boolean }> = [
-  { id: "media", label: "Media", enabled: true },
-  { id: "audio", label: "Audio", enabled: false },
-  { id: "text", label: "Text", enabled: false },
-  { id: "stickers", label: "Stickers", enabled: false },
-  { id: "effects", label: "Effects", enabled: false },
-  { id: "ai", label: "AI", enabled: true },
+const tabs: Array<{ id: LibraryTab; label: string; icon: string; enabled: boolean }> = [
+  { id: "media", label: "Media", icon: "🎞", enabled: true },
+  { id: "audio", label: "Audio", icon: "🎵", enabled: false },
+  { id: "text", label: "Text", icon: "T", enabled: false },
+  { id: "stickers", label: "Stickers", icon: "😊", enabled: false },
+  { id: "effects", label: "Effects", icon: "✨", enabled: false },
+  { id: "ai", label: "AI", icon: "⚡", enabled: true },
 ];
 
 export function LibraryPanel({
@@ -35,11 +35,13 @@ export function LibraryPanel({
             type="button"
             role="tab"
             aria-selected={tab.id === activeTab}
+            title={tab.label}
             className={tab.id === activeTab ? "activeLibraryTab" : ""}
             disabled={!tab.enabled}
             onClick={() => onTabChange(tab.id)}
           >
-            {tab.label}
+            <span aria-hidden>{tab.icon}</span>
+            <span>{tab.label}</span>
           </button>
         ))}
       </div>
@@ -49,19 +51,19 @@ export function LibraryPanel({
         {activeTab === "ai" ? (
           <section className="aiPanel">
             <h2>AI</h2>
-            <p className="hint">First feature hook for plugin architecture.</p>
+            <p className="hint">Plugin slot</p>
             <button type="button" onClick={onRunAutoCaptions} disabled={!hasVideoAsset}>
-              Auto captions (placeholder)
+              ⚡ Captions
             </button>
             {!hasVideoAsset ? (
-              <p className="hint">Upload at least one video to test captions integration.</p>
+              <p className="hint">Upload video first</p>
             ) : null}
           </section>
         ) : null}
         {activeTab !== "media" && activeTab !== "ai" ? (
           <section>
-            <h2>Coming Soon</h2>
-            <p className="hint">This panel will be enabled in the next iterations.</p>
+            <h2>Soon</h2>
+            <p className="hint">Feature not enabled yet.</p>
           </section>
         ) : null}
       </div>

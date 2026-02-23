@@ -92,11 +92,11 @@ export function MediaBinPanel({
                 <span className="assetHint">Drag to timeline</span>
               </div>
               <div className="assetActions">
-                <button type="button" onClick={() => onActivateAsset(asset.id)}>
-                  Open
+                <button type="button" className="iconBtn" title="Open in player" onClick={() => onActivateAsset(asset.id)}>
+                  ▶
                 </button>
-                <button type="button" onClick={() => onAddToTimeline(asset.id)}>
-                  Add
+                <button type="button" className="iconBtn" title="Add to timeline" onClick={() => onAddToTimeline(asset.id)}>
+                  +
                 </button>
               </div>
               {asset.thumbnails && asset.thumbnails.length > 0 ? (

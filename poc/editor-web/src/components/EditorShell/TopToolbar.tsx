@@ -29,7 +29,7 @@ export function TopToolbar({
     <div className="appTopBar">
       <div className="appTopGroup">
         <label className="projectNameInput">
-          <span>Project</span>
+          <span>🎬</span>
           <input
             type="text"
             value={projectName}
@@ -37,34 +37,41 @@ export function TopToolbar({
             placeholder="Untitled project"
           />
         </label>
-        <button type="button" onClick={onSave}>
-          Save
+        <button type="button" className="iconBtn" title="Save project" aria-label="Save project" onClick={onSave}>
+          💾
         </button>
-        <button type="button" onClick={onLoad}>
-          Load
+        <button type="button" className="iconBtn" title="Load project" aria-label="Load project" onClick={onLoad}>
+          📂
         </button>
       </div>
 
       <div className="appTopGroup">
-        <button type="button" onClick={onUndo}>
-          Undo
+        <button type="button" className="iconBtn" title="Undo" aria-label="Undo" onClick={onUndo}>
+          ↶
         </button>
-        <button type="button" onClick={onRedo}>
-          Redo
+        <button type="button" className="iconBtn" title="Redo" aria-label="Redo" onClick={onRedo}>
+          ↷
         </button>
-        <button type="button" className="primaryBtn" onClick={onExport}>
-          Export
+        <button type="button" className="primaryBtn iconBtn iconBtnWithLabel" onClick={onExport}>
+          <span aria-hidden>⤴</span>
+          <span>Export</span>
         </button>
       </div>
 
       <div className="appTopGroup appTopGroupRight">
         {canShowDiagnostics ? (
-          <button type="button" onClick={onToggleDiagnostics}>
-            {diagnosticsVisible ? "Hide Diagnostics" : "Diagnostics"}
+          <button
+            type="button"
+            className={`iconBtn ${diagnosticsVisible ? "activeTool" : ""}`}
+            title={diagnosticsVisible ? "Hide diagnostics" : "Show diagnostics"}
+            aria-label={diagnosticsVisible ? "Hide diagnostics" : "Show diagnostics"}
+            onClick={onToggleDiagnostics}
+          >
+            🧪
           </button>
         ) : null}
-        <button type="button" aria-label="About MAV" onClick={onOpenAbout}>
-          i
+        <button type="button" className="iconBtn" aria-label="About MAV" title="About MAV" onClick={onOpenAbout}>
+          ⓘ
         </button>
       </div>
     </div>

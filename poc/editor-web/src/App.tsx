@@ -569,6 +569,9 @@ export default function App() {
   const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
   const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
   const [videoDurationMs, setVideoDurationMs] = useState<number>(0);
+  const [sourcePlayheadMs, setSourcePlayheadMs] = useState<number>(0);
+  const [sourceDurationMs, setSourceDurationMs] = useState<number>(0);
+  const [sourceIsPlaying, setSourceIsPlaying] = useState(false);
   const [isFmp4Source, setIsFmp4Source] = useState(false);
   const [decoderMode, setDecoderMode] = useState<"none" | "webcodecs" | "fallback">("none");
   const [decoderFps, setDecoderFps] = useState(30);
@@ -630,8 +633,10 @@ export default function App() {
     targetUs: 0,
   });
 
-  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const fallbackVideoRef = useRef<HTMLVideoElement | null>(null);
+  const programCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const programVideoRef = useRef<HTMLVideoElement | null>(null);
+  const sourceCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const sourceVideoRef = useRef<HTMLVideoElement | null>(null);
   const assetFilesRef = useRef<Map<string, File>>(new Map());
   const previewAssetIdRef = useRef<string | null>(null);
 
@@ -651,6 +656,25 @@ export default function App() {
   const snapActive = snapEnabled && !altSnapDisabled;
 
   const playheadUs = useMemo(() => toUs(playheadMs), [playheadMs]);
+  const playbackDurationMs = useMemo(
+    () =>
+      Math.max(
+        project.timeline.durationMs,
+        videoDurationMs,
+        decoderDurationUs > 0 ? Math.round(decoderDurationUs / 1000) : 0,
+      ),
+    [project.timeline.durationMs, videoDurationMs, decoderDurationUs],
+  );
+  const sourceMonitorDurationMs = useMemo(
+    () =>
+      Math.max(
+        sourceDurationMs,
+        videoDurationMs,
+        decoderDurationUs > 0 ? Math.round(decoderDurationUs / 1000) : 0,
+        1000,
+      ),
+    [sourceDurationMs, videoDurationMs, decoderDurationUs],
+  );
   const clipKey = (trackId: string, clipId: string) => `${trackId}:${clipId}`;
   const selectedClipSet = useMemo(() => new Set(selectedClipKeys), [selectedClipKeys]);
   const selectedClipCount = selectedClipKeys.length;
@@ -1253,6 +1277,45 @@ export default function App() {
     });
   };
 
+  const addTrack = (kind: TrackKind) => {
+    setProjectWithNormalize((prev) => {
+      const prefix = kind === "video" ? "video" : kind === "overlay" ? "overlay" : "audio";
+      let index = prev.timeline.tracks.filter((track) => track.kind === kind).length + 1;
+      let nextId = `${prefix}-${index}`;
+      while (prev.timeline.tracks.some((track) => track.id === nextId)) {
+        index += 1;
+        nextId = `${prefix}-${index}`;
+      }
+      const tracks = [...prev.timeline.tracks, { id: nextId, kind, clips: [] }];
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+    setLog(`Track added: ${kind}.`);
+  };
+
+  const removeTrack = (trackId: string) => {
+    const target = project.timeline.tracks.find((track) => track.id === trackId);
+    if (!target) return;
+    if (project.timeline.tracks.length <= 1) {
+      setLog("At least one track must remain.");
+      return;
+    }
+    if (target.clips.length > 0) {
+      setLog("Remove or move clips before deleting this track.");
+      return;
+    }
+
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.filter((track) => track.id !== trackId);
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+
+    if (selection?.trackId === trackId) {
+      setSelection(null);
+    }
+    setSelectedClipKeys((prev) => prev.filter((key) => !key.startsWith(`${trackId}:`)));
+    setLog(`Track removed: ${trackId}.`);
+  };
+
   const addOverlayClip = () => {
     setProjectWithNormalize((prev) => {
       const tracks = prev.timeline.tracks.map((track) => {
@@ -1445,6 +1508,7 @@ export default function App() {
   };
 
   const togglePlayback = () => {
+    setSourceIsPlaying(false);
     setIsPlaying((prev) => !prev);
   };
 
@@ -1452,7 +1516,19 @@ export default function App() {
     stopPlayback();
     const frameMs = Math.max(1, Math.round(1000 / Math.max(1, decoderFps)));
     const delta = direction === "forward" ? frameMs : -frameMs;
-    setPlayheadMs((prev) => clamp(prev + delta, 0, project.timeline.durationMs));
+    setPlayheadMs((prev) => clamp(prev + delta, 0, playbackDurationMs));
+  };
+
+  const toggleSourcePlayback = () => {
+    setIsPlaying(false);
+    setSourceIsPlaying((prev) => !prev);
+  };
+
+  const stepSourceFrame = (direction: "forward" | "backward") => {
+    setSourceIsPlaying(false);
+    const frameMs = Math.max(1, Math.round(1000 / Math.max(1, decoderFps)));
+    const delta = direction === "forward" ? frameMs : -frameMs;
+    setSourcePlayheadMs((prev) => clamp(prev + delta, 0, sourceMonitorDurationMs));
   };
 
   const setMarkInAtPlayhead = () => {
@@ -1937,8 +2013,8 @@ export default function App() {
   }, [devMode]);
 
   useEffect(() => {
-    if (!isPlaying) {
-      const playback = playbackRef.current;
+    const playback = playbackRef.current;
+    if (!isPlaying || videoUrl) {
       if (playback.rafId != null) {
         cancelAnimationFrame(playback.rafId);
         playback.rafId = null;
@@ -1947,7 +2023,6 @@ export default function App() {
       return;
     }
 
-    const playback = playbackRef.current;
     const tick = (ts: number) => {
       if (!isPlaying) return;
       const previousTs = playback.lastTs ?? ts;
@@ -1955,14 +2030,14 @@ export default function App() {
       const deltaMs = Math.min(PLAYBACK_TICK_LIMIT_MS, Math.max(0, ts - previousTs));
       setPlayheadMs((prev) => {
         const loopStart = markInMs ?? 0;
-        const loopEnd = markOutMs != null ? Math.min(project.timeline.durationMs, markOutMs) : project.timeline.durationMs;
+        const loopEnd = markOutMs != null ? Math.min(playbackDurationMs, markOutMs) : playbackDurationMs;
         const next = prev + deltaMs;
         if (loopPlayback && loopEnd > loopStart && next >= loopEnd) {
           return loopStart;
         }
-        if (next >= project.timeline.durationMs) {
-          stopPlayback();
-          return project.timeline.durationMs;
+        if (next >= playbackDurationMs) {
+          setIsPlaying(false);
+          return playbackDurationMs;
         }
         return next;
       });
@@ -1977,7 +2052,108 @@ export default function App() {
       }
       playback.lastTs = null;
     };
-  }, [isPlaying, loopPlayback, markInMs, markOutMs, project.timeline.durationMs]);
+  }, [isPlaying, loopPlayback, markInMs, markOutMs, playbackDurationMs, videoUrl]);
+
+  useEffect(() => {
+    if (!isPlaying || !videoUrl) return;
+
+    const video = programVideoRef.current;
+    const canvas = programCanvasRef.current;
+    if (!video || !canvas) return;
+
+    const throttle = previewSeekThrottleRef.current;
+    if (throttle.timeoutId != null) {
+      window.clearTimeout(throttle.timeoutId);
+      throttle.timeoutId = null;
+    }
+
+    const loopStartMs = clamp(markInMs ?? 0, 0, playbackDurationMs);
+    const loopEndMs = clamp(markOutMs ?? playbackDurationMs, 0, playbackDurationMs);
+    const loopEnabled = loopPlayback && loopEndMs > loopStartMs;
+
+    let cancelled = false;
+    let rafId: number | null = null;
+    let rvfcId: number | null = null;
+
+    const hasRvfc =
+      typeof (video as HTMLVideoElement & { requestVideoFrameCallback?: unknown }).requestVideoFrameCallback ===
+      "function";
+
+    const drawAndSync = (mediaTimeSeconds?: number) => {
+      if (cancelled) return;
+      const currentMs = Math.round((mediaTimeSeconds ?? video.currentTime) * 1000);
+
+      if (loopEnabled && currentMs >= loopEndMs) {
+        video.currentTime = loopStartMs / 1000;
+        setPlayheadMs(loopStartMs);
+        return;
+      }
+
+      if (!loopEnabled && currentMs >= playbackDurationMs) {
+        setPlayheadMs(playbackDurationMs);
+        setIsPlaying(false);
+        return;
+      }
+
+      setPlayheadMs(clamp(currentMs, 0, playbackDurationMs));
+      drawVideoFrameOnCanvas(canvas, video);
+    };
+
+    const scheduleFrame = () => {
+      if (cancelled) return;
+      if (hasRvfc) {
+        rvfcId = (
+          video as HTMLVideoElement & {
+            requestVideoFrameCallback: (
+              callback: (now: number, metadata: VideoFrameCallbackMetadata) => void,
+            ) => number;
+          }
+        ).requestVideoFrameCallback((_now, metadata) => {
+          drawAndSync(metadata.mediaTime);
+          scheduleFrame();
+        });
+        return;
+      }
+      rafId = requestAnimationFrame(() => {
+        drawAndSync();
+        scheduleFrame();
+      });
+    };
+
+    const initialPlayheadMs = playheadMs;
+
+    void (async () => {
+      try {
+        video.currentTime = clamp(initialPlayheadMs, 0, playbackDurationMs) / 1000;
+        await video.play();
+        scheduleFrame();
+      } catch (error) {
+        setLog(`Preview playback error: ${String(error)}`);
+        setIsPlaying(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (rafId != null) cancelAnimationFrame(rafId);
+      if (hasRvfc && rvfcId != null) {
+        (
+          video as HTMLVideoElement & {
+            cancelVideoFrameCallback: (id: number) => void;
+          }
+        ).cancelVideoFrameCallback(rvfcId);
+      }
+      video.pause();
+    };
+  }, [
+    isPlaying,
+    loopPlayback,
+    markInMs,
+    markOutMs,
+    playbackDurationMs,
+    setLog,
+    videoUrl,
+  ]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2276,7 +2452,7 @@ export default function App() {
         }
 
         latestHandledRequestIdRef.current = message.requestId;
-        const canvas = previewCanvasRef.current;
+        const canvas = programCanvasRef.current;
         if (canvas) {
           drawVideoFrameOnCanvas(canvas, message.frame);
         }
@@ -2300,16 +2476,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (decoderMode !== "webcodecs") return;
+    if (decoderMode !== "webcodecs" || isPlaying) return;
     queuePreviewSeek(playheadUs);
-  }, [decoderMode, playheadUs]);
+  }, [decoderMode, isPlaying, playheadUs]);
 
   useEffect(() => {
-    if (decoderMode !== "fallback") return;
+    if (decoderMode !== "fallback" || isPlaying) return;
     if (!videoUrl) return;
 
-    const video = fallbackVideoRef.current;
-    const canvas = previewCanvasRef.current;
+    const video = programVideoRef.current;
+    const canvas = programCanvasRef.current;
     if (!video || !canvas) return;
 
     const targetSeconds = fromUs(playheadUs) / 1000;
@@ -2334,7 +2510,110 @@ export default function App() {
       video.addEventListener("seeked", onSeeked, { once: true });
       video.currentTime = Math.max(0, targetSeconds);
     }
-  }, [decoderMode, playheadUs, videoUrl]);
+  }, [decoderMode, isPlaying, playheadUs, videoUrl]);
+
+  useEffect(() => {
+    if (!videoUrl || sourceIsPlaying) return;
+    const video = sourceVideoRef.current;
+    const canvas = sourceCanvasRef.current;
+    if (!video || !canvas) return;
+
+    const targetSeconds = clamp(sourcePlayheadMs, 0, sourceMonitorDurationMs) / 1000;
+    const draw = () => drawVideoFrameOnCanvas(canvas, video);
+
+    const hasRvfc =
+      typeof (video as HTMLVideoElement & { requestVideoFrameCallback?: unknown }).requestVideoFrameCallback ===
+      "function";
+
+    if (hasRvfc) {
+      const onSeeked = () => {
+        (video as HTMLVideoElement & {
+          requestVideoFrameCallback: (
+            callback: (now: number, metadata: VideoFrameCallbackMetadata) => void,
+          ) => number;
+        }).requestVideoFrameCallback(() => draw());
+      };
+      video.addEventListener("seeked", onSeeked, { once: true });
+      video.currentTime = Math.max(0, targetSeconds);
+    } else {
+      const onSeeked = () => draw();
+      video.addEventListener("seeked", onSeeked, { once: true });
+      video.currentTime = Math.max(0, targetSeconds);
+    }
+  }, [sourceIsPlaying, sourceMonitorDurationMs, sourcePlayheadMs, videoUrl]);
+
+  useEffect(() => {
+    if (!sourceIsPlaying || !videoUrl) return;
+    const video = sourceVideoRef.current;
+    const canvas = sourceCanvasRef.current;
+    if (!video || !canvas) return;
+
+    let cancelled = false;
+    let rafId: number | null = null;
+    let rvfcId: number | null = null;
+
+    const hasRvfc =
+      typeof (video as HTMLVideoElement & { requestVideoFrameCallback?: unknown }).requestVideoFrameCallback ===
+      "function";
+
+    const drawAndSync = (mediaTimeSeconds?: number) => {
+      if (cancelled) return;
+      const currentMs = Math.round((mediaTimeSeconds ?? video.currentTime) * 1000);
+      if (currentMs >= sourceMonitorDurationMs) {
+        setSourcePlayheadMs(sourceMonitorDurationMs);
+        setSourceIsPlaying(false);
+        return;
+      }
+      setSourcePlayheadMs(clamp(currentMs, 0, sourceMonitorDurationMs));
+      drawVideoFrameOnCanvas(canvas, video);
+    };
+
+    const scheduleFrame = () => {
+      if (cancelled) return;
+      if (hasRvfc) {
+        rvfcId = (
+          video as HTMLVideoElement & {
+            requestVideoFrameCallback: (
+              callback: (now: number, metadata: VideoFrameCallbackMetadata) => void,
+            ) => number;
+          }
+        ).requestVideoFrameCallback((_now, metadata) => {
+          drawAndSync(metadata.mediaTime);
+          scheduleFrame();
+        });
+        return;
+      }
+      rafId = requestAnimationFrame(() => {
+        drawAndSync();
+        scheduleFrame();
+      });
+    };
+
+    const initialSourcePlayheadMs = sourcePlayheadMs;
+    void (async () => {
+      try {
+        video.currentTime = clamp(initialSourcePlayheadMs, 0, sourceMonitorDurationMs) / 1000;
+        await video.play();
+        scheduleFrame();
+      } catch (error) {
+        setLog(`Source playback error: ${String(error)}`);
+        setSourceIsPlaying(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (rafId != null) cancelAnimationFrame(rafId);
+      if (hasRvfc && rvfcId != null) {
+        (
+          video as HTMLVideoElement & {
+            cancelVideoFrameCallback: (id: number) => void;
+          }
+        ).cancelVideoFrameCallback(rvfcId);
+      }
+      video.pause();
+    };
+  }, [setLog, sourceIsPlaying, sourceMonitorDurationMs, videoUrl]);
 
   const loadAssetForPreview = async (assetId: string, file: File, url: string) => {
     setVideoUrl(url);
@@ -2356,6 +2635,9 @@ export default function App() {
     decoderErrorsRef.current = [];
     lastSeekResultRef.current = null;
     latestHandledRequestIdRef.current = 0;
+    setSourceIsPlaying(false);
+    setSourcePlayheadMs(0);
+    setSourceDurationMs(0);
 
     const worker = decodeWorkerRef.current;
     if (worker && webCodecsAvailable) {
@@ -2470,7 +2752,7 @@ export default function App() {
     setExportValidationMessage(null);
   };
 
-  const onPreviewMetadataLoaded = (durationMs: number, width: number, height: number) => {
+  const onProgramMetadataLoaded = (durationMs: number, width: number, height: number) => {
     setVideoDurationMs(durationMs);
     if (!previewAssetId) return;
     setProjectWithNormalize((prev) => ({
@@ -2492,13 +2774,20 @@ export default function App() {
     requestAssetAnalysis(previewAssetId, file, durationMs);
   };
 
+  const onSourceMetadataLoaded = (durationMs: number) => {
+    setSourceDurationMs(durationMs);
+    if (sourcePlayheadMs > durationMs) {
+      setSourcePlayheadMs(durationMs);
+    }
+  };
+
   const zoomWidthPx = Math.max(
     960,
-    (project.timeline.durationMs / 1000) * pixelsPerSecond + 120,
+    (playbackDurationMs / 1000) * pixelsPerSecond + 120,
   );
 
   const setPlayheadClamped = (value: number) => {
-    setPlayheadMs(clamp(Math.round(value), 0, project.timeline.durationMs));
+    setPlayheadMs(clamp(Math.round(value), 0, playbackDurationMs));
   };
 
   const setSelectionFromKeys = (keys: string[], primary?: { trackId: string; clipId: string } | null) => {
@@ -2573,12 +2862,15 @@ export default function App() {
         )}
         preview={(
           <PreviewPanel
-            canvasRef={previewCanvasRef}
-            fallbackVideoRef={fallbackVideoRef}
+            programCanvasRef={programCanvasRef}
+            programVideoRef={programVideoRef}
+            sourceCanvasRef={sourceCanvasRef}
+            sourceVideoRef={sourceVideoRef}
             videoUrl={videoUrl}
-            onLoadedMetadata={onPreviewMetadataLoaded}
+            onProgramLoadedMetadata={onProgramMetadataLoaded}
+            onSourceLoadedMetadata={onSourceMetadataLoaded}
             playheadMs={playheadMs}
-            durationMs={project.timeline.durationMs}
+            durationMs={playbackDurationMs}
             isPlaying={isPlaying}
             onTogglePlay={togglePlayback}
             onScrub={setPlayheadClamped}
@@ -2589,6 +2881,15 @@ export default function App() {
             markOutMs={markOutMs}
             onSetMarkIn={setMarkInAtPlayhead}
             onSetMarkOut={setMarkOutAtPlayhead}
+            sourcePlayheadMs={sourcePlayheadMs}
+            sourceDurationMs={sourceMonitorDurationMs}
+            sourceIsPlaying={sourceIsPlaying}
+            onSourceTogglePlay={toggleSourcePlayback}
+            onSourceScrub={(value) => {
+              setSourceIsPlaying(false);
+              setSourcePlayheadMs(clamp(Math.round(value), 0, sourceMonitorDurationMs));
+            }}
+            onSourceStepFrame={stepSourceFrame}
           />
         )}
         inspector={(
@@ -2651,6 +2952,8 @@ export default function App() {
             onSplitClip={(trackId, clipId) => splitClipAt(trackId, clipId, playheadMs)}
             onDeleteClip={deleteClipById}
             onDuplicateClip={duplicateClip}
+            onAddTrack={addTrack}
+            onRemoveTrack={removeTrack}
             assetMap={timelineAssetMap}
           />
         )}
