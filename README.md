@@ -38,3 +38,7 @@ Le front tourne sur `http://localhost:5173` et l'API sur `http://localhost:8787`
 2. Ajouter generation de `mavproj` depuis la timeline.
 3. Ajouter export XML/EDL pour Premiere.
 
+## Licence
+
+Ce depot est sous licence proprietaire ("All rights reserved").  
+Voir `/LICENSE`.
