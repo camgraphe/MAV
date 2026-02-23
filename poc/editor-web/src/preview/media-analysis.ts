@@ -11,6 +11,7 @@ export type RealMediaAnalysis = {
   durationMs?: number;
   width?: number;
   height?: number;
+  hasAudio?: boolean;
 };
 
 type AnalyzeOptions = {
@@ -162,11 +163,16 @@ async function captureVideoThumbnails(
   }
 }
 
-async function captureWaveform(file: File, points: number): Promise<number[]> {
+async function captureWaveform(
+  file: File,
+  points: number,
+): Promise<{ waveform: number[]; hasAudio?: boolean }> {
   const AudioContextCtor =
     window.AudioContext ??
     (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AudioContextCtor) return [];
+  if (!AudioContextCtor) {
+    return { waveform: [], hasAudio: undefined };
+  }
 
   const audioContext = new AudioContextCtor();
   try {
@@ -175,6 +181,7 @@ async function captureWaveform(file: File, points: number): Promise<number[]> {
     const channelCount = Math.max(1, audioBuffer.numberOfChannels);
     const channels = Array.from({ length: channelCount }, (_, index) => audioBuffer.getChannelData(index));
     const sampleCount = audioBuffer.length;
+    const hasAudio = channelCount > 0 && sampleCount > 0;
     const bucketSize = Math.max(1, Math.floor(sampleCount / points));
     const waveform: number[] = [];
 
@@ -202,9 +209,9 @@ async function captureWaveform(file: File, points: number): Promise<number[]> {
       waveform.push(clamp(Math.sqrt(peak), 0.06, 1));
     }
 
-    return waveform;
+    return { waveform, hasAudio };
   } catch {
-    return [];
+    return { waveform: [], hasAudio: undefined };
   } finally {
     try {
       await audioContext.close();
@@ -220,22 +227,23 @@ export async function analyzeMediaFile(file: File, options: AnalyzeOptions = {})
   const waveformPoints = clamp(Math.round(options.waveformPoints ?? DEFAULT_POINTS), 24, 160);
   const requestedDurationMs = Math.max(0, Math.round(options.durationMs ?? 0));
 
-  const [thumbResult, waveform] = await Promise.all([
+  const [thumbResult, waveResult] = await Promise.all([
     captureVideoThumbnails(file, requestedDurationMs, thumbnailsPerSecond, maxThumbnails).catch(() => ({
       thumbnails: [] as string[],
       durationMs: undefined,
       width: undefined,
       height: undefined,
     })),
-    captureWaveform(file, waveformPoints).catch(() => [] as number[]),
+    captureWaveform(file, waveformPoints).catch(() => ({ waveform: [] as number[], hasAudio: undefined })),
   ]);
 
   return {
     thumbnails: thumbResult.thumbnails,
-    waveform,
+    waveform: waveResult.waveform,
     codecGuess: guessCodecFromMimeType(file.type),
     durationMs: thumbResult.durationMs,
     width: thumbResult.width,
     height: thumbResult.height,
+    hasAudio: waveResult.hasAudio,
   };
 }

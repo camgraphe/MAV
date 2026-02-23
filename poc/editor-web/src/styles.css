@@ -701,6 +701,55 @@ select {
   position: relative;
   display: grid;
   grid-template-columns: 156px minmax(0, 1fr);
+  grid-template-rows: 28px auto;
+  align-items: start;
+}
+
+.timelineRulerSpacer {
+  position: sticky;
+  left: 0;
+  z-index: 14;
+  background: #111d2d;
+  border-right: 1px solid #344862;
+  border-bottom: 1px solid #2f3f55;
+}
+
+.timelineRuler {
+  position: relative;
+  border-bottom: 1px solid #2f3f55;
+  background: linear-gradient(180deg, #142235, #111d2d);
+  overflow: hidden;
+}
+
+.timelineRulerTick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid rgba(117, 144, 173, 0.38);
+}
+
+.timelineRulerTick.major {
+  border-left-color: rgba(146, 178, 211, 0.62);
+}
+
+.timelineRulerTick span {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  font-size: 10px;
+  color: #b9cce3;
+  white-space: nowrap;
+}
+
+.timelineRulerPlayhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #f14d4d;
+  pointer-events: none;
+  z-index: 3;
 }
 
 .trackColumn {
@@ -738,6 +787,10 @@ select {
   display: grid;
   gap: 5px;
   background: linear-gradient(180deg, rgba(20, 34, 52, 0.95), rgba(16, 27, 41, 0.95));
+}
+
+.trackHeaderRow.sectionStart {
+  border-top: 1px solid #4b698c;
 }
 
 .trackHeaderRow strong {
@@ -841,6 +894,10 @@ select {
   right: 0;
   height: 60px;
   border-bottom: 1px solid #2b3c54;
+}
+
+.trackLane.sectionStart {
+  border-top: 1px solid #3f5877;
 }
 
 .trackHeaderActions {

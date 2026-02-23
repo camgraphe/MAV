@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mav.local/schemas/project.v1.json",
+  "title": "MAV Project v1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "meta",
+    "timeline",
+    "assets"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "mav.project.v1"
+    },
+    "meta": {
+      "type": "object",
+      "required": ["projectId", "createdAt", "updatedAt", "fps", "width", "height"],
+      "properties": {
+        "projectId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "fps": { "type": "number", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 16 },
+        "height": { "type": "integer", "minimum": 16 }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "url"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["video", "audio", "image"] },
+          "url": { "type": "string" },
+          "durationMs": { "type": "number", "minimum": 0 },
+          "hasAudio": { "type": "boolean" }
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "required": ["durationMs", "tracks"],
+      "properties": {
+        "durationMs": { "type": "number", "minimum": 0 },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "clips"],
+            "properties": {
+              "id": { "type": "string" },
+              "kind": { "enum": ["video", "overlay", "audio"] },
+              "muted": { "type": "boolean" },
+              "locked": { "type": "boolean" },
+              "visible": { "type": "boolean" },
+              "clips": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "assetId",
+                    "startMs",
+                    "durationMs",
+                    "inMs",
+                    "outMs"
+                  ],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "assetId": { "type": "string" },
+                    "startMs": { "type": "number", "minimum": 0 },
+                    "durationMs": { "type": "number", "minimum": 0 },
+                    "inMs": { "type": "number", "minimum": 0 },
+                    "outMs": { "type": "number", "minimum": 0 },
+                    "mediaRole": { "enum": ["video", "audio", "overlay"] },
+                    "linkGroupId": { "type": "string" },
+                    "linkLocked": { "type": "boolean" },
+                    "volume": { "type": "number", "minimum": 0, "maximum": 2 },
+                    "transform": {
+                      "type": "object",
+                      "properties": {
+                        "x": { "type": "number" },
+                        "y": { "type": "number" },
+                        "scale": { "type": "number", "minimum": 0 },
+                        "rotation": { "type": "number" },
+                        "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

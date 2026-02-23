@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import projectSchema from "../contracts/project.schema.v0.json";
+import projectSchema from "../contracts/project.schema.v1.json";
 import type {
   DecodeWorkerInMessage,
   DecodeWorkerOutMessage,
@@ -30,6 +30,8 @@ type OverlayTransform = {
   rotation: number;
 };
 
+type ClipMediaRole = "video" | "audio" | "overlay";
+
 type Clip = {
   id: string;
   label: string;
@@ -38,6 +40,9 @@ type Clip = {
   durationMs: number;
   inMs: number;
   outMs: number;
+  mediaRole?: ClipMediaRole;
+  linkGroupId?: string;
+  linkLocked?: boolean;
   transform?: OverlayTransform;
 };
 
@@ -51,7 +56,7 @@ type Track = {
 };
 
 type ProjectState = {
-  schemaVersion: "mav.project.v0";
+  schemaVersion: "mav.project.v0" | "mav.project.v1";
   meta: {
     projectId: string;
     createdAt: string;
@@ -60,22 +65,25 @@ type ProjectState = {
     width: number;
     height: number;
   };
-  assets: Array<{
-    id: string;
-    kind: "video" | "audio" | "image";
-    url: string;
-    durationMs?: number;
-    name?: string;
-    codec?: string;
-    width?: number;
-    height?: number;
-    thumbnails?: string[];
-    waveform?: number[];
-  }>;
+  assets: Asset[];
   timeline: {
     durationMs: number;
     tracks: Track[];
   };
+};
+
+type Asset = {
+  id: string;
+  kind: "video" | "audio" | "image";
+  url: string;
+  durationMs?: number;
+  name?: string;
+  codec?: string;
+  width?: number;
+  height?: number;
+  thumbnails?: string[];
+  waveform?: number[];
+  hasAudio?: boolean;
 };
 
 type Selection = {
@@ -93,6 +101,7 @@ type DragState = {
   startClientX: number;
   latestClientX: number;
   original: Clip;
+  linkedClips: ClipWithRef[];
   snapTargetsMs: number[];
   thresholdMs: number;
 };
@@ -266,6 +275,7 @@ type AssetAnalysisCacheValue = {
   durationMs?: number;
   width?: number;
   height?: number;
+  hasAudio?: boolean;
 };
 
 declare global {
@@ -323,10 +333,79 @@ function assetAnalysisCacheKey(file: File): string {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+function getTrackSection(kind: TrackKind): "visual" | "audio" {
+  return kind === "audio" ? "audio" : "visual";
+}
+
+function orderTracksStrict(tracks: Track[]): Track[] {
+  return tracks
+    .map((track, index) => ({ track, index }))
+    .sort((a, b) => {
+      const sectionDiff =
+        getTrackSection(a.track.kind) === getTrackSection(b.track.kind)
+          ? 0
+          : getTrackSection(a.track.kind) === "visual"
+            ? -1
+            : 1;
+      if (sectionDiff !== 0) return sectionDiff;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.track);
+}
+
+function nextTrackId(tracks: Track[], kind: TrackKind): string {
+  const prefix = kind === "video" ? "video" : kind === "overlay" ? "overlay" : "audio";
+  let index = tracks.filter((track) => track.kind === kind).length + 1;
+  let nextId = `${prefix}-${index}`;
+  while (tracks.some((track) => track.id === nextId)) {
+    index += 1;
+    nextId = `${prefix}-${index}`;
+  }
+  return nextId;
+}
+
+function findOrCreateUnlockedTrack(
+  tracks: Track[],
+  kind: TrackKind,
+): { tracks: Track[]; trackIndex: number } | null {
+  const existingIndex = tracks.findIndex((track) => track.kind === kind && !track.locked);
+  if (existingIndex >= 0) return { tracks, trackIndex: existingIndex };
+
+  const newTrack: Track = {
+    id: nextTrackId(tracks, kind),
+    kind,
+    muted: false,
+    locked: false,
+    visible: true,
+    clips: [],
+  };
+
+  const next = [...tracks];
+  if (kind === "audio") {
+    next.push(newTrack);
+    return { tracks: next, trackIndex: next.length - 1 };
+  }
+
+  const firstAudioIndex = next.findIndex((track) => track.kind === "audio");
+  const insertIndex = firstAudioIndex >= 0 ? firstAudioIndex : next.length;
+  next.splice(insertIndex, 0, newTrack);
+  return { tracks: next, trackIndex: insertIndex };
+}
+
+function toMediaRole(kind: TrackKind): ClipMediaRole {
+  if (kind === "audio") return "audio";
+  if (kind === "overlay") return "overlay";
+  return "video";
+}
+
+function effectiveClipRole(trackKind: TrackKind, clip: Clip): ClipMediaRole {
+  return clip.mediaRole ?? toMediaRole(trackKind);
+}
+
 function createInitialProject(): ProjectState {
   const now = new Date().toISOString();
   return {
-    schemaVersion: "mav.project.v0",
+    schemaVersion: "mav.project.v1",
     meta: {
       projectId: "poc-project",
       createdAt: now,
@@ -369,9 +448,11 @@ function createInitialProject(): ProjectState {
 }
 
 function normalizeProject(project: ProjectState): ProjectState {
-  const tracks = [...project.timeline.tracks]
+  const tracks = orderTracksStrict(
+    [...project.timeline.tracks]
     .map((track) => ({
       ...track,
+      kind: (track.kind === "video" || track.kind === "overlay" || track.kind === "audio" ? track.kind : "video"),
       muted: Boolean((track as { muted?: unknown }).muted),
       locked: Boolean((track as { locked?: unknown }).locked),
       visible: (track as { visible?: unknown }).visible !== false,
@@ -383,9 +464,20 @@ function normalizeProject(project: ProjectState): ProjectState {
           durationMs: Math.round(clip.durationMs),
           inMs: Math.round(clip.inMs),
           outMs: Math.round(clip.outMs),
+          mediaRole: clip.mediaRole ?? toMediaRole(track.kind),
+          linkGroupId: clip.linkGroupId,
+          linkLocked: clip.linkGroupId ? clip.linkLocked !== false : false,
         })),
     }))
-    .sort((a, b) => a.id.localeCompare(b.id));
+  );
+
+  const assets: Asset[] = project.assets.map((asset) => ({
+    ...asset,
+    hasAudio:
+      typeof asset.hasAudio === "boolean"
+        ? asset.hasAudio
+        : undefined,
+  }));
 
   const durationMs = Math.max(
     1000,
@@ -396,10 +488,12 @@ function normalizeProject(project: ProjectState): ProjectState {
 
   return {
     ...project,
+    schemaVersion: "mav.project.v1",
     meta: {
       ...project.meta,
       updatedAt: new Date().toISOString(),
     },
+    assets,
     timeline: {
       durationMs,
       tracks,
@@ -581,6 +675,93 @@ function applyCollisionPolicy(
   return applyNoOverlap(track, clipId, nextClip);
 }
 
+type ClipRef = {
+  trackId: string;
+  clipId: string;
+};
+
+type ClipWithRef = ClipRef & {
+  clip: Clip;
+};
+
+function clipRefToKey(ref: ClipRef): string {
+  return `${ref.trackId}:${ref.clipId}`;
+}
+
+function findClipByRef(project: ProjectState, ref: ClipRef): ClipWithRef | null {
+  const track = project.timeline.tracks.find((entry) => entry.id === ref.trackId);
+  if (!track) return null;
+  const clip = track.clips.find((entry) => entry.id === ref.clipId);
+  if (!clip) return null;
+  return { ...ref, clip };
+}
+
+function collectLinkedClipRefs(project: ProjectState, ref: ClipRef): ClipRef[] {
+  const target = findClipByRef(project, ref);
+  if (!target) return [];
+  if (!target.clip.linkGroupId || target.clip.linkLocked === false) return [ref];
+
+  const linked: ClipRef[] = [];
+  for (const track of project.timeline.tracks) {
+    for (const clip of track.clips) {
+      if (clip.linkGroupId !== target.clip.linkGroupId) continue;
+      if (clip.linkLocked === false) continue;
+      linked.push({ trackId: track.id, clipId: clip.id });
+    }
+  }
+  return linked.length > 0 ? linked : [ref];
+}
+
+function uniqClipRefs(refs: ClipRef[]): ClipRef[] {
+  const seen = new Set<string>();
+  const unique: ClipRef[] = [];
+  for (const ref of refs) {
+    const key = clipRefToKey(ref);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(ref);
+  }
+  return unique;
+}
+
+function expandClipRefsWithLinks(project: ProjectState, refs: ClipRef[]): ClipRef[] {
+  const expanded: ClipRef[] = [];
+  for (const ref of refs) {
+    expanded.push(...collectLinkedClipRefs(project, ref));
+  }
+  return uniqClipRefs(expanded);
+}
+
+function applyClipUpdatesAtomically(
+  project: ProjectState,
+  updates: Array<{
+    trackId: string;
+    clipId: string;
+    nextClip: Clip;
+  }>,
+  mode: CollisionMode,
+): Track[] | null {
+  const tracks = project.timeline.tracks.map((track) => ({
+    ...track,
+    clips: [...track.clips],
+  }));
+  const trackIndexById = new Map(tracks.map((track, index) => [track.id, index]));
+
+  for (const update of updates) {
+    const trackIndex = trackIndexById.get(update.trackId);
+    if (trackIndex == null) return null;
+    const track = tracks[trackIndex];
+    if (!track || track.locked) return null;
+    if (!track.clips.some((clip) => clip.id === update.clipId)) return null;
+
+    const constrained = applyCollisionPolicy(track, update.clipId, update.nextClip, mode);
+    if (!constrained.clips.some((clip) => clip.id === update.clipId)) return null;
+    tracks[trackIndex] = constrained;
+  }
+
+  return tracks;
+}
+
 function createSeededRandom(seed: number): () => number {
   let state = (seed >>> 0) || 0x6d2b79f5;
   return () => {
@@ -692,6 +873,7 @@ export default function App() {
 
   const dragRef = useRef<DragState | null>(null);
   const dragRafRef = useRef<number | null>(null);
+  const interactionPreviewRef = useRef<InteractionPreview | null>(null);
   const playbackRef = useRef<{ rafId: number | null; lastTs: number | null }>({
     rafId: null,
     lastTs: null,
@@ -755,6 +937,11 @@ export default function App() {
     [sourceDurationMs],
   );
   const clipKey = (trackId: string, clipId: string) => `${trackId}:${clipId}`;
+  const parseClipKey = (key: string): ClipRef | null => {
+    const [trackId, clipId] = key.split(":");
+    if (!trackId || !clipId) return null;
+    return { trackId, clipId };
+  };
   const selectedClipSet = useMemo(() => new Set(selectedClipKeys), [selectedClipKeys]);
   const selectedClipCount = selectedClipKeys.length;
 
@@ -790,6 +977,18 @@ export default function App() {
 
   const clipExists = (trackId: string, clipId: string) =>
     project.timeline.tracks.some((track) => track.id === trackId && track.clips.some((clip) => clip.id === clipId));
+
+  const resolveRefsFromKeys = (state: ProjectState, keys: string[], includeLinks = true): ClipRef[] => {
+    const refs = keys
+      .map((key) => parseClipKey(key))
+      .filter((ref): ref is ClipRef => ref != null)
+      .filter((ref) => Boolean(findClipByRef(state, ref)));
+    if (!includeLinks) return uniqClipRefs(refs);
+    return expandClipRefsWithLinks(state, refs);
+  };
+
+  const hasLockedRefs = (state: ProjectState, refs: ClipRef[]): boolean =>
+    refs.some((ref) => isTrackLocked(state, ref.trackId));
 
   const setProjectWithNormalize = (
     updater: (prev: ProjectState) => ProjectState,
@@ -843,6 +1042,7 @@ export default function App() {
               durationMs: Math.max(asset.durationMs ?? 0, analysis.durationMs ?? 0) || asset.durationMs,
               width: analysis.width ?? asset.width,
               height: analysis.height ?? asset.height,
+              hasAudio: typeof analysis.hasAudio === "boolean" ? analysis.hasAudio : asset.hasAudio,
             }
           : asset,
       ),
@@ -897,13 +1097,14 @@ export default function App() {
           durationMs: analysis.durationMs,
           width: analysis.width,
           height: analysis.height,
+          hasAudio: analysis.hasAudio,
         };
         const nextCacheKey = assetAnalysisKeyRef.current.get(assetId);
         if (nextCacheKey !== cacheKey) {
           assetThumbBusyRef.current.delete(assetId);
           return;
         }
-        if (next.thumbnails.length === 0 && next.waveform.length === 0) {
+        if (next.thumbnails.length === 0) {
           queueFallbackWorker();
           return;
         }
@@ -1041,7 +1242,7 @@ export default function App() {
       }
     }
 
-    setInteractionPreview({
+    const nextPreview: InteractionPreview = {
       trackId: drag.trackId,
       clipId: drag.clipId,
       startMs,
@@ -1049,7 +1250,10 @@ export default function App() {
       inMs,
       outMs,
       snapGuideMs: guide,
-    });
+    };
+
+    interactionPreviewRef.current = nextPreview;
+    setInteractionPreview(nextPreview);
 
     setSnapGuideMs(guide);
   };
@@ -1082,40 +1286,79 @@ export default function App() {
     if (!drag) return;
     if (event.pointerId !== drag.pointerId) return;
 
-    if (interactionPreview && isTrackLocked(project, interactionPreview.trackId)) {
+    drag.latestClientX = event.clientX;
+    applyInteractionPreview();
+    const preview = interactionPreviewRef.current;
+
+    if (preview && isTrackLocked(project, preview.trackId)) {
       setLog("Track is locked.");
-    } else if (interactionPreview) {
-      setProjectWithNormalize((prev) => {
-        const pos = findClip(prev, {
-          trackId: interactionPreview.trackId,
-          clipId: interactionPreview.clipId,
+    } else if (preview) {
+      const hasLockedLinked = drag.linkedClips.some((entry) => isTrackLocked(project, entry.trackId));
+      if (hasLockedLinked) {
+        setLog("Linked clip group includes locked tracks.");
+      } else {
+        const requestedStartDelta = preview.startMs - drag.original.startMs;
+        const requestedDurationDelta = preview.durationMs - drag.original.durationMs;
+        const requestedInDelta = preview.inMs - drag.original.inMs;
+
+        let startDelta = requestedStartDelta;
+        let durationDelta = requestedDurationDelta;
+        let inDelta = requestedInDelta;
+
+        if (drag.mode === "move") {
+          const minStart = drag.linkedClips.reduce((min, entry) => Math.min(min, entry.clip.startMs), Number.POSITIVE_INFINITY);
+          startDelta = Math.max(-minStart, requestedStartDelta);
+          durationDelta = 0;
+          inDelta = 0;
+        } else if (drag.mode === "resize-start") {
+          const minDelta = drag.linkedClips.reduce((max, entry) => Math.max(max, -entry.clip.startMs), Number.NEGATIVE_INFINITY);
+          const maxDelta = drag.linkedClips.reduce(
+            (min, entry) => Math.min(min, entry.clip.durationMs - MIN_CLIP_DURATION_MS),
+            Number.POSITIVE_INFINITY,
+          );
+          startDelta = clamp(requestedStartDelta, minDelta, maxDelta);
+          durationDelta = -startDelta;
+          inDelta = startDelta;
+        } else if (drag.mode === "resize-end") {
+          const minDurationDelta = drag.linkedClips.reduce(
+            (max, entry) => Math.max(max, MIN_CLIP_DURATION_MS - entry.clip.durationMs),
+            Number.NEGATIVE_INFINITY,
+          );
+          durationDelta = Math.max(minDurationDelta, requestedDurationDelta);
+          startDelta = 0;
+          inDelta = 0;
+        }
+
+        const updates = drag.linkedClips.map((entry) => {
+          const original = entry.clip;
+          const nextStartMs = Math.max(0, Math.round(original.startMs + startDelta));
+          const nextDurationMs = Math.max(MIN_CLIP_DURATION_MS, Math.round(original.durationMs + durationDelta));
+          const nextInMs = Math.max(0, Math.round(original.inMs + inDelta));
+          return {
+            trackId: entry.trackId,
+            clipId: entry.clipId,
+            nextClip: {
+              ...original,
+              startMs: nextStartMs,
+              durationMs: nextDurationMs,
+              inMs: nextInMs,
+              outMs: nextInMs + nextDurationMs,
+            },
+          };
         });
-        if (!pos) return prev;
 
-        const tracks = [...prev.timeline.tracks];
-        const track = { ...tracks[pos.trackIndex] };
-        if (track.locked) return prev;
-        const clip = track.clips[pos.clipIndex];
-        const constrainedTrack = applyCollisionPolicy(
-          track,
-          clip.id,
-          {
-            ...clip,
-            startMs: interactionPreview.startMs,
-            durationMs: interactionPreview.durationMs,
-            inMs: interactionPreview.inMs,
-            outMs: interactionPreview.outMs,
-          },
-          collisionMode,
-        );
-
-        tracks[pos.trackIndex] = constrainedTrack;
-        return { ...prev, timeline: { ...prev.timeline, tracks } };
-      });
-      setLog(`Committed ${drag.mode} for ${drag.clipId} (${collisionMode}).`);
+        setProjectWithNormalize((prev) => {
+          const tracks = applyClipUpdatesAtomically(prev, updates, collisionMode);
+          if (!tracks) return prev;
+          return { ...prev, timeline: { ...prev.timeline, tracks } };
+        });
+        const scopeLabel = drag.linkedClips.length > 1 ? "linked group" : drag.clipId;
+        setLog(`Committed ${drag.mode} for ${scopeLabel} (${collisionMode}).`);
+      }
     }
 
     dragRef.current = null;
+    interactionPreviewRef.current = null;
     setInteractionPreview(null);
     setSnapGuideMs(null);
     cleanupPointerListeners();
@@ -1176,6 +1419,10 @@ export default function App() {
     event.currentTarget.setPointerCapture(event.pointerId);
 
     const thresholdMs = (8 / pixelsPerSecond) * 1000;
+    const linkedRefs = expandClipRefsWithLinks(project, [{ trackId, clipId: clip.id }]);
+    const linkedClips: ClipWithRef[] = linkedRefs
+      .map((ref) => findClipByRef(project, ref))
+      .filter((entry): entry is ClipWithRef => entry != null);
     dragRef.current = {
       pointerId: event.pointerId,
       mode,
@@ -1184,13 +1431,14 @@ export default function App() {
       startClientX: event.clientX,
       latestClientX: event.clientX,
       original: clip,
+      linkedClips,
       snapTargetsMs: collectSnapTargets(project, clip.id, playheadMs),
       thresholdMs,
     };
 
     setSelection({ trackId, clipId: clip.id });
     setSelectedClipKeys([key]);
-    setInteractionPreview({
+    const nextPreview: InteractionPreview = {
       trackId,
       clipId: clip.id,
       startMs: clip.startMs,
@@ -1198,12 +1446,18 @@ export default function App() {
       inMs: clip.inMs,
       outMs: clip.outMs,
       snapGuideMs: null,
-    });
+    };
+    interactionPreviewRef.current = nextPreview;
+    setInteractionPreview(nextPreview);
 
     window.addEventListener("pointermove", onWindowPointerMove);
     window.addEventListener("pointerup", onWindowPointerUp);
     window.addEventListener("pointercancel", onWindowPointerUp);
   };
+
+  useEffect(() => {
+    interactionPreviewRef.current = interactionPreview;
+  }, [interactionPreview]);
 
   const updateSelectedClip = (updater: (clip: Clip) => Clip) => {
     if (!selection) return;
@@ -1226,87 +1480,166 @@ export default function App() {
 
   const nudgeSelected = (deltaMs: number) => {
     if (selectedClipSet.size === 0) return;
-    const hasLockedSelection = project.timeline.tracks.some(
-      (track) =>
-        track.locked &&
-        track.clips.some((clip) => selectedClipSet.has(clipKey(track.id, clip.id))),
-    );
-    if (hasLockedSelection) {
-      setLog("Locked tracks were skipped.");
+    const refs = resolveRefsFromKeys(project, selectedClipKeys, true);
+    if (refs.length === 0) return;
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
+      return;
     }
+
     setProjectWithNormalize((prev) => {
-      const tracks = prev.timeline.tracks.map((track) => {
-        if (track.locked) return track;
-        let changed = false;
-        const clips = track.clips.map((clip) => {
-          if (!selectedClipSet.has(clipKey(track.id, clip.id))) return clip;
-          changed = true;
-          const raw = clip.startMs + deltaMs;
-          const snapped = snapActive ? quantize(raw, snapMs) : raw;
-          return sanitizeClip({ ...clip, startMs: Math.max(0, snapped) });
-        });
-        return changed ? { ...track, clips: sortClips(clips) } : track;
-      });
+      const targetRefs = resolveRefsFromKeys(prev, selectedClipKeys, true);
+      if (targetRefs.length === 0) return prev;
+      if (hasLockedRefs(prev, targetRefs)) return prev;
+
+      const originals = targetRefs
+        .map((ref) => findClipByRef(prev, ref))
+        .filter((entry): entry is ClipWithRef => entry != null);
+      if (originals.length === 0) return prev;
+
+      const minStart = originals.reduce((min, entry) => Math.min(min, entry.clip.startMs), Number.POSITIVE_INFINITY);
+      const rawDelta = snapActive ? quantize(deltaMs, snapMs) : deltaMs;
+      const clampedDelta = Math.max(-minStart, rawDelta);
+      const updates = originals.map((entry) => ({
+        trackId: entry.trackId,
+        clipId: entry.clipId,
+        nextClip: sanitizeClip({
+          ...entry.clip,
+          startMs: Math.max(0, entry.clip.startMs + clampedDelta),
+        }),
+      }));
+
+      const tracks = applyClipUpdatesAtomically(prev, updates, collisionMode);
+      if (!tracks) return prev;
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
   };
 
   const moveSelected = (deltaMs: number) => {
-    updateSelectedClip((clip) => {
-      const raw = clip.startMs + deltaMs;
-      const snapped = snapActive ? quantize(raw, snapMs) : raw;
-      return { ...clip, startMs: Math.max(0, snapped) };
+    if (!selection) return;
+    const refs = expandClipRefsWithLinks(project, [selection]);
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
+      return;
+    }
+    setProjectWithNormalize((prev) => {
+      const originals = refs
+        .map((ref) => findClipByRef(prev, ref))
+        .filter((entry): entry is ClipWithRef => entry != null);
+      if (originals.length === 0) return prev;
+      const minStart = originals.reduce((min, entry) => Math.min(min, entry.clip.startMs), Number.POSITIVE_INFINITY);
+      const requestedDelta = snapActive ? quantize(deltaMs, snapMs) : deltaMs;
+      const safeDelta = Math.max(-minStart, requestedDelta);
+      const updates = originals.map((entry) => ({
+        trackId: entry.trackId,
+        clipId: entry.clipId,
+        nextClip: sanitizeClip({
+          ...entry.clip,
+          startMs: Math.max(0, entry.clip.startMs + safeDelta),
+        }),
+      }));
+      const tracks = applyClipUpdatesAtomically(prev, updates, collisionMode);
+      if (!tracks) return prev;
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
   };
 
   const trimSelectedStart = (deltaMs: number) => {
-    updateSelectedClip((clip) => {
-      const maxStart = clip.startMs + clip.durationMs - MIN_CLIP_DURATION_MS;
-      const targetStart = clamp(clip.startMs + deltaMs, 0, maxStart);
-      const snapped = snapActive ? quantize(targetStart, snapMs) : targetStart;
-      const finalStart = clamp(snapped, 0, maxStart);
-      const shifted = finalStart - clip.startMs;
-      const durationMs = clip.durationMs - shifted;
-      return {
-        ...clip,
-        startMs: finalStart,
-        durationMs,
-        inMs: clip.inMs + shifted,
-      };
+    if (!selection) return;
+    const refs = expandClipRefsWithLinks(project, [selection]);
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
+      return;
+    }
+    setProjectWithNormalize((prev) => {
+      const originals = refs
+        .map((ref) => findClipByRef(prev, ref))
+        .filter((entry): entry is ClipWithRef => entry != null);
+      if (originals.length === 0) return prev;
+
+      const requested = deltaMs;
+      const minDelta = originals.reduce((max, entry) => Math.max(max, -entry.clip.startMs), Number.NEGATIVE_INFINITY);
+      const maxDelta = originals.reduce(
+        (min, entry) => Math.min(min, entry.clip.durationMs - MIN_CLIP_DURATION_MS),
+        Number.POSITIVE_INFINITY,
+      );
+      const snapped = snapActive ? quantize(requested, snapMs) : requested;
+      const safeDelta = clamp(snapped, minDelta, maxDelta);
+      const updates = originals.map((entry) => {
+        const startMs = Math.max(0, entry.clip.startMs + safeDelta);
+        const durationMs = Math.max(MIN_CLIP_DURATION_MS, entry.clip.durationMs - safeDelta);
+        const inMs = Math.max(0, entry.clip.inMs + safeDelta);
+        return {
+          trackId: entry.trackId,
+          clipId: entry.clipId,
+          nextClip: sanitizeClip({
+            ...entry.clip,
+            startMs,
+            durationMs,
+            inMs,
+            outMs: inMs + durationMs,
+          }),
+        };
+      });
+
+      const tracks = applyClipUpdatesAtomically(prev, updates, collisionMode);
+      if (!tracks) return prev;
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
   };
 
   const trimSelectedEnd = (deltaMs: number) => {
-    updateSelectedClip((clip) => {
-      const rawDuration = clip.durationMs + deltaMs;
-      const snapped = snapActive ? quantize(rawDuration, snapMs) : rawDuration;
-      const durationMs = Math.max(MIN_CLIP_DURATION_MS, snapped);
-      return {
-        ...clip,
-        durationMs,
-        outMs: clip.inMs + durationMs,
-      };
+    if (!selection) return;
+    const refs = expandClipRefsWithLinks(project, [selection]);
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
+      return;
+    }
+    setProjectWithNormalize((prev) => {
+      const originals = refs
+        .map((ref) => findClipByRef(prev, ref))
+        .filter((entry): entry is ClipWithRef => entry != null);
+      if (originals.length === 0) return prev;
+
+      const requested = deltaMs;
+      const minDelta = originals.reduce(
+        (max, entry) => Math.max(max, MIN_CLIP_DURATION_MS - entry.clip.durationMs),
+        Number.NEGATIVE_INFINITY,
+      );
+      const snapped = snapActive ? quantize(requested, snapMs) : requested;
+      const safeDelta = Math.max(minDelta, snapped);
+      const updates = originals.map((entry) => {
+        const durationMs = Math.max(MIN_CLIP_DURATION_MS, entry.clip.durationMs + safeDelta);
+        return {
+          trackId: entry.trackId,
+          clipId: entry.clipId,
+          nextClip: sanitizeClip({
+            ...entry.clip,
+            durationMs,
+            outMs: entry.clip.inMs + durationMs,
+          }),
+        };
+      });
+
+      const tracks = applyClipUpdatesAtomically(prev, updates, collisionMode);
+      if (!tracks) return prev;
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
   };
 
   const removeSelected = () => {
     if (selectedClipSet.size === 0) return;
-    const removableKeys = new Set<string>();
-    for (const track of project.timeline.tracks) {
-      if (track.locked) continue;
-      for (const clip of track.clips) {
-        const key = clipKey(track.id, clip.id);
-        if (selectedClipSet.has(key)) {
-          removableKeys.add(key);
-        }
-      }
-    }
-    if (removableKeys.size === 0) {
-      setLog("Selection is on locked tracks.");
+    const refs = resolveRefsFromKeys(project, selectedClipKeys, true);
+    if (refs.length === 0) return;
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
       return;
     }
 
     setProjectWithNormalize((prev) => {
+      const targetRefs = resolveRefsFromKeys(prev, selectedClipKeys, true);
+      if (targetRefs.length === 0) return prev;
+      const removableKeys = new Set(targetRefs.map((ref) => clipRefToKey(ref)));
       const tracks = prev.timeline.tracks.map((track) => {
         if (track.locked) return track;
         const removed = track.clips
@@ -1334,6 +1667,8 @@ export default function App() {
     });
 
     setSelectedClipKeys((prev) => {
+      const targetRefs = resolveRefsFromKeys(project, prev, true);
+      const removableKeys = new Set(targetRefs.map((ref) => clipRefToKey(ref)));
       const next = prev.filter((key) => !removableKeys.has(key));
       const primary = next.at(-1);
       if (primary) {
@@ -1346,166 +1681,274 @@ export default function App() {
     });
   };
 
-  const splitSelected = () => {
-    if (!selection) return;
-    if (selectedTrack?.locked) {
-      setLog("Selected track is locked.");
+  const splitClipAt = (trackId: string, clipId: string, targetMs: number) => {
+    const seedRef: ClipRef = { trackId, clipId };
+    const refs = expandClipRefsWithLinks(project, [seedRef]);
+    if (refs.length === 0) return;
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
       return;
     }
-    setProjectWithNormalize((prev) => {
-      const pos = findClip(prev, selection);
-      if (!pos) return prev;
 
-      const tracks = [...prev.timeline.tracks];
-      const track = { ...tracks[pos.trackIndex] };
-      if (track.locked) return prev;
-      const clips = [...track.clips];
-      const clip = clips[pos.clipIndex];
-
-      const splitAt = clamp(
-        snapActive ? quantize(playheadMs, snapMs) : playheadMs,
-        clip.startMs + MIN_CLIP_DURATION_MS,
-        clip.startMs + clip.durationMs - MIN_CLIP_DURATION_MS,
+    const splitAtBase = snapActive ? quantize(targetMs, snapMs) : targetMs;
+    const canSplitAll = refs.every((ref) => {
+      const entry = findClipByRef(project, ref);
+      if (!entry) return false;
+      return (
+        splitAtBase > entry.clip.startMs + MIN_CLIP_DURATION_MS &&
+        splitAtBase < entry.clip.startMs + entry.clip.durationMs - MIN_CLIP_DURATION_MS
       );
+    });
+    if (!canSplitAll) {
+      setLog("Split point is too close to an edge for one linked clip.");
+      return;
+    }
+    const seedClip = findClipByRef(project, seedRef)?.clip;
+    const splitLinkedGroup = Boolean(seedClip?.linkGroupId && seedClip.linkLocked !== false && refs.length > 1);
+    const leftGroupId = splitLinkedGroup ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined;
+    const rightGroupId = splitLinkedGroup ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined;
 
-      const leftDuration = splitAt - clip.startMs;
-      const rightDuration = clip.durationMs - leftDuration;
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.map((track) => ({
+        ...track,
+        clips: [...track.clips],
+      }));
+      let primaryRight: ClipRef | null = null;
 
-      const left: Clip = {
-        ...clip,
-        id: `${clip.id}-a`,
-        label: `${clip.label}-A`,
-        durationMs: leftDuration,
-        outMs: clip.inMs + leftDuration,
-      };
+      for (const ref of refs) {
+        const trackIndex = tracks.findIndex((track) => track.id === ref.trackId);
+        if (trackIndex < 0) return prev;
+        const track = tracks[trackIndex];
+        if (!track || track.locked) return prev;
+        const clipIndex = track.clips.findIndex((clip) => clip.id === ref.clipId);
+        if (clipIndex < 0) return prev;
+        const clip = track.clips[clipIndex];
 
-      const right: Clip = {
-        ...clip,
-        id: `${clip.id}-b`,
-        label: `${clip.label}-B`,
-        startMs: splitAt,
-        inMs: clip.inMs + leftDuration,
-        durationMs: rightDuration,
-        outMs: clip.inMs + leftDuration + rightDuration,
-      };
+        const splitAt = splitAtBase;
+        const leftDuration = splitAt - clip.startMs;
+        const rightDuration = clip.durationMs - leftDuration;
+        if (leftDuration < MIN_CLIP_DURATION_MS || rightDuration < MIN_CLIP_DURATION_MS) {
+          return prev;
+        }
 
-      clips.splice(pos.clipIndex, 1, left, right);
-      track.clips = clips;
-      tracks[pos.trackIndex] = track;
+        const left: Clip = {
+          ...clip,
+          id: `${clip.id}-a-${crypto.randomUUID().slice(0, 4)}`,
+          label: `${clip.label}-A`,
+          durationMs: leftDuration,
+          outMs: clip.inMs + leftDuration,
+          linkGroupId: leftGroupId ?? clip.linkGroupId,
+          linkLocked: leftGroupId ? true : clip.linkLocked,
+        };
 
-      setSelection({ trackId: track.id, clipId: right.id });
-      setSelectedClipKeys([clipKey(track.id, right.id)]);
+        const right: Clip = {
+          ...clip,
+          id: `${clip.id}-b-${crypto.randomUUID().slice(0, 4)}`,
+          label: `${clip.label}-B`,
+          startMs: splitAt,
+          inMs: clip.inMs + leftDuration,
+          durationMs: rightDuration,
+          outMs: clip.inMs + leftDuration + rightDuration,
+          linkGroupId: rightGroupId ?? clip.linkGroupId,
+          linkLocked: rightGroupId ? true : clip.linkLocked,
+        };
+
+        track.clips.splice(clipIndex, 1, left, right);
+        tracks[trackIndex] = { ...track, clips: sortClips(track.clips) };
+        if (ref.trackId === seedRef.trackId && ref.clipId === seedRef.clipId) {
+          primaryRight = { trackId: ref.trackId, clipId: right.id };
+        }
+      }
+
+      if (primaryRight) {
+        setSelection(primaryRight);
+        setSelectedClipKeys([clipKey(primaryRight.trackId, primaryRight.clipId)]);
+      }
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
   };
 
-  const splitClipAt = (trackId: string, clipId: string, targetMs: number) => {
-    if (isTrackLocked(project, trackId)) {
-      setLog("Track is locked.");
-      return;
-    }
-    setProjectWithNormalize((prev) => {
-      const pos = findClip(prev, { trackId, clipId });
-      if (!pos) return prev;
-      const tracks = [...prev.timeline.tracks];
-      const track = { ...tracks[pos.trackIndex] };
-      if (track.locked) return prev;
-      const clips = [...track.clips];
-      const clip = clips[pos.clipIndex];
-
-      const splitAt = clamp(
-        snapActive ? quantize(targetMs, snapMs) : targetMs,
-        clip.startMs + MIN_CLIP_DURATION_MS,
-        clip.startMs + clip.durationMs - MIN_CLIP_DURATION_MS,
-      );
-      const leftDuration = splitAt - clip.startMs;
-      const rightDuration = clip.durationMs - leftDuration;
-
-      const left: Clip = {
-        ...clip,
-        id: `${clip.id}-a`,
-        label: `${clip.label}-A`,
-        durationMs: leftDuration,
-        outMs: clip.inMs + leftDuration,
-      };
-
-      const right: Clip = {
-        ...clip,
-        id: `${clip.id}-b`,
-        label: `${clip.label}-B`,
-        startMs: splitAt,
-        inMs: clip.inMs + leftDuration,
-        durationMs: rightDuration,
-        outMs: clip.inMs + leftDuration + rightDuration,
-      };
-
-      clips.splice(pos.clipIndex, 1, left, right);
-      track.clips = clips;
-      tracks[pos.trackIndex] = track;
-      setSelection({ trackId: track.id, clipId: right.id });
-      setSelectedClipKeys([clipKey(track.id, right.id)]);
-      return { ...prev, timeline: { ...prev.timeline, tracks } };
-    });
+  const splitSelected = () => {
+    if (!selection) return;
+    splitClipAt(selection.trackId, selection.clipId, playheadMs);
   };
 
   const deleteClipById = (trackId: string, clipId: string) => {
-    if (isTrackLocked(project, trackId)) {
-      setLog("Track is locked.");
+    const refs = expandClipRefsWithLinks(project, [{ trackId, clipId }]);
+    if (refs.length === 0) return;
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
       return;
     }
     setProjectWithNormalize((prev) => {
-      const tracks = prev.timeline.tracks.map((track) =>
-        track.id === trackId && !track.locked
-          ? { ...track, clips: track.clips.filter((clip) => clip.id !== clipId) }
-          : track,
-      );
+      const targetRefs = expandClipRefsWithLinks(prev, [{ trackId, clipId }]);
+      const removeSet = new Set(targetRefs.map((ref) => clipRefToKey(ref)));
+      const tracks = prev.timeline.tracks.map((track) => {
+        if (track.locked) return track;
+        return {
+          ...track,
+          clips: track.clips.filter((clip) => !removeSet.has(clipKey(track.id, clip.id))),
+        };
+      });
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
-    if (selection?.trackId === trackId && selection.clipId === clipId) {
+    const removeSet = new Set(refs.map((ref) => clipRefToKey(ref)));
+    if (selection && removeSet.has(clipKey(selection.trackId, selection.clipId))) {
       setSelection(null);
     }
-    setSelectedClipKeys((prev) => prev.filter((key) => key !== clipKey(trackId, clipId)));
+    setSelectedClipKeys((prev) => prev.filter((key) => !removeSet.has(key)));
   };
 
   const duplicateClip = (trackId: string, clipId: string) => {
-    if (isTrackLocked(project, trackId)) {
+    const refs = expandClipRefsWithLinks(project, [{ trackId, clipId }]);
+    if (refs.length === 0) return;
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
+      return;
+    }
+
+    setProjectWithNormalize((prev) => {
+      const linkedRefs = expandClipRefsWithLinks(prev, [{ trackId, clipId }]);
+      if (linkedRefs.length === 0) return prev;
+      if (hasLockedRefs(prev, linkedRefs)) return prev;
+
+      const originals = linkedRefs
+        .map((ref) => findClipByRef(prev, ref))
+        .filter((entry): entry is ClipWithRef => entry != null);
+      if (originals.length === 0) return prev;
+
+      const primary = originals.find((entry) => entry.trackId === trackId && entry.clipId === clipId);
+      if (!primary) return prev;
+      const shiftMs = primary.clip.durationMs;
+      const nextLinkGroupId = primary.clip.linkGroupId ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined;
+      const duplicateBySourceKey = new Map<string, Clip>();
+
+      const tracks = prev.timeline.tracks.map((item) => {
+        const additions = originals
+          .filter((entry) => entry.trackId === item.id)
+          .map((entry) => {
+            const duplicateId = `${entry.clip.id}-copy-${crypto.randomUUID().slice(0, 4)}`;
+            const duplicated = sanitizeClip({
+              ...entry.clip,
+              id: duplicateId,
+              label: `${entry.clip.label} Copy`,
+              startMs: entry.clip.startMs + shiftMs,
+              linkGroupId: nextLinkGroupId,
+              linkLocked: nextLinkGroupId ? true : entry.clip.linkLocked,
+            });
+            duplicateBySourceKey.set(clipRefToKey({ trackId: entry.trackId, clipId: entry.clipId }), duplicated);
+            return duplicated;
+          });
+        if (additions.length === 0) return item;
+        return { ...item, clips: sortClips([...item.clips, ...additions]) };
+      });
+
+      const primaryNewClip = duplicateBySourceKey.get(clipRefToKey({ trackId, clipId }));
+      if (primaryNewClip) {
+        setSelection({ trackId, clipId: primaryNewClip.id });
+        setSelectedClipKeys([clipKey(trackId, primaryNewClip.id)]);
+      }
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+  };
+
+  const detachLinkedGroup = (trackId: string, clipId: string) => {
+    const refs = expandClipRefsWithLinks(project, [{ trackId, clipId }]);
+    if (refs.length <= 1) {
+      setLog("No linked audio/video group to detach.");
+      return;
+    }
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
+      return;
+    }
+
+    const refSet = new Set(refs.map((ref) => clipRefToKey(ref)));
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.map((track) => {
+        if (track.locked) return track;
+        const clips = track.clips.map((clip) =>
+          refSet.has(clipKey(track.id, clip.id))
+            ? { ...clip, linkGroupId: undefined, linkLocked: false }
+            : clip,
+        );
+        return { ...track, clips };
+      });
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+    setLog("Detached linked audio/video clips.");
+  };
+
+  const relinkSelectedVideoAudio = (contextTrackId?: string, contextClipId?: string) => {
+    const selectedRefs = resolveRefsFromKeys(project, selectedClipKeys, false);
+    const contextRef =
+      contextTrackId && contextClipId ? [{ trackId: contextTrackId, clipId: contextClipId }] : [];
+    const refs = uniqClipRefs([...selectedRefs, ...contextRef]);
+    if (refs.length < 2) {
+      setLog("Select one video clip and one audio clip to relink.");
+      return;
+    }
+
+    const clipEntries = refs
+      .map((ref) => findClipByRef(project, ref))
+      .filter((entry): entry is ClipWithRef => entry != null)
+      .map((entry) => {
+        const track = project.timeline.tracks.find((item) => item.id === entry.trackId);
+        return {
+          ...entry,
+          role: track ? effectiveClipRole(track.kind, entry.clip) : "video",
+        };
+      });
+
+    const videoEntries = clipEntries.filter((entry) => entry.role === "video");
+    const audioEntries = clipEntries.filter((entry) => entry.role === "audio");
+    if (videoEntries.length !== 1 || audioEntries.length !== 1) {
+      setLog("Relink requires exactly one video clip and one audio clip selected.");
+      return;
+    }
+
+    const linkRefs = [
+      { trackId: videoEntries[0].trackId, clipId: videoEntries[0].clipId },
+      { trackId: audioEntries[0].trackId, clipId: audioEntries[0].clipId },
+    ];
+    if (hasLockedRefs(project, linkRefs)) {
       setLog("Track is locked.");
       return;
     }
-    setProjectWithNormalize((prev) => {
-      const track = prev.timeline.tracks.find((item) => item.id === trackId);
-      if (!track || track.locked) return prev;
-      const source = track.clips.find((clip) => clip.id === clipId);
-      if (!source) return prev;
 
-      const duplicateId = `${source.id}-copy-${crypto.randomUUID().slice(0, 4)}`;
-      const startMs = source.startMs + source.durationMs;
-      const duplicated: Clip = {
-        ...source,
-        id: duplicateId,
-        label: `${source.label} Copy`,
-        startMs,
-        outMs: source.inMs + source.durationMs,
-      };
-      const tracks = prev.timeline.tracks.map((item) =>
-        item.id === trackId ? { ...item, clips: sortClips([...item.clips, duplicated]) } : item,
-      );
-      setSelection({ trackId, clipId: duplicateId });
-      setSelectedClipKeys([clipKey(trackId, duplicateId)]);
+    const nextGroupId = `link-${crypto.randomUUID().slice(0, 8)}`;
+    const refSet = new Set(linkRefs.map((ref) => clipRefToKey(ref)));
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.map((track) => ({
+        ...track,
+        clips: track.clips.map((clip) =>
+          refSet.has(clipKey(track.id, clip.id))
+            ? {
+                ...clip,
+                linkGroupId: nextGroupId,
+                linkLocked: true,
+                mediaRole: toMediaRole(track.kind),
+              }
+            : clip,
+        ),
+      }));
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
+    setLog("Relinked selected video/audio clips.");
   };
 
   const addTrack = (kind: TrackKind) => {
     setProjectWithNormalize((prev) => {
-      const prefix = kind === "video" ? "video" : kind === "overlay" ? "overlay" : "audio";
-      let index = prev.timeline.tracks.filter((track) => track.kind === kind).length + 1;
-      let nextId = `${prefix}-${index}`;
-      while (prev.timeline.tracks.some((track) => track.id === nextId)) {
-        index += 1;
-        nextId = `${prefix}-${index}`;
+      const nextId = nextTrackId(prev.timeline.tracks, kind);
+      const nextTrack: Track = { id: nextId, kind, muted: false, locked: false, visible: true, clips: [] };
+      const tracks = [...prev.timeline.tracks];
+      if (kind === "audio") {
+        tracks.push(nextTrack);
+      } else {
+        const firstAudioIndex = tracks.findIndex((track) => track.kind === "audio");
+        const insertIndex = firstAudioIndex >= 0 ? firstAudioIndex : tracks.length;
+        tracks.splice(insertIndex, 0, nextTrack);
       }
-      const tracks = [...prev.timeline.tracks, { id: nextId, kind, muted: false, locked: false, visible: true, clips: [] }];
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
     setLog(`Track added: ${kind}.`);
@@ -1568,6 +2011,8 @@ export default function App() {
           durationMs: 1200,
           inMs: 0,
           outMs: 1200,
+          mediaRole: "overlay",
+          linkLocked: false,
           transform: { x: 0, y: 0, scale: 1, rotation: 0 },
         };
         setSelection({ trackId: track.id, clipId: id });
@@ -1690,18 +2135,51 @@ export default function App() {
   };
 
   const updateSelectedTiming = (patch: Partial<Pick<Clip, "startMs" | "durationMs" | "inMs" | "outMs">>) => {
-    updateSelectedClip((clip) => {
-      const nextStart = patch.startMs ?? clip.startMs;
-      const nextDuration = Math.max(MIN_CLIP_DURATION_MS, patch.durationMs ?? clip.durationMs);
-      const nextIn = patch.inMs ?? clip.inMs;
-      const nextOut = patch.outMs ?? nextIn + nextDuration;
-      return {
-        ...clip,
-        startMs: Math.max(0, nextStart),
-        durationMs: nextDuration,
-        inMs: Math.max(0, nextIn),
-        outMs: Math.max(nextIn, nextOut),
-      };
+    if (!selection) return;
+    const refs = expandClipRefsWithLinks(project, [selection]);
+    if (hasLockedRefs(project, refs)) {
+      setLog("Linked clip group includes locked tracks.");
+      return;
+    }
+
+    setProjectWithNormalize((prev) => {
+      const originals = refs
+        .map((ref) => findClipByRef(prev, ref))
+        .filter((entry): entry is ClipWithRef => entry != null);
+      if (originals.length === 0) return prev;
+
+      const primary = originals.find((entry) => entry.trackId === selection.trackId && entry.clipId === selection.clipId);
+      if (!primary) return prev;
+      const requestedStart = patch.startMs ?? primary.clip.startMs;
+      const requestedDuration = Math.max(MIN_CLIP_DURATION_MS, patch.durationMs ?? primary.clip.durationMs);
+      const requestedIn = patch.inMs ?? primary.clip.inMs;
+      const requestedOut = patch.outMs ?? requestedIn + requestedDuration;
+      const startDelta = requestedStart - primary.clip.startMs;
+      const durationDelta = requestedDuration - primary.clip.durationMs;
+      const inDelta = requestedIn - primary.clip.inMs;
+      const outDelta = Math.max(requestedIn, requestedOut) - primary.clip.outMs;
+
+      const updates = originals.map((entry) => {
+        const nextStart = Math.max(0, entry.clip.startMs + startDelta);
+        const nextDuration = Math.max(MIN_CLIP_DURATION_MS, entry.clip.durationMs + durationDelta);
+        const nextIn = Math.max(0, entry.clip.inMs + inDelta);
+        const nextOut = Math.max(nextIn, entry.clip.outMs + outDelta);
+        return {
+          trackId: entry.trackId,
+          clipId: entry.clipId,
+          nextClip: sanitizeClip({
+            ...entry.clip,
+            startMs: nextStart,
+            durationMs: nextDuration,
+            inMs: nextIn,
+            outMs: nextOut,
+          }),
+        };
+      });
+
+      const tracks = applyClipUpdatesAtomically(prev, updates, collisionMode);
+      if (!tracks) return prev;
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
   };
 
@@ -1740,6 +2218,10 @@ export default function App() {
 
     try {
       const parsed = JSON.parse(raw) as ProjectState;
+      if (parsed.schemaVersion !== "mav.project.v0" && parsed.schemaVersion !== "mav.project.v1") {
+        setLog("Saved project schema is not supported.");
+        return;
+      }
       const normalized = normalizeProject(parsed);
       setProject(normalized);
       historyRef.current = { undo: [], redo: [] };
@@ -1760,7 +2242,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "mav-project-v0.json";
+    a.download = "mav-project-v1.json";
     a.click();
     URL.revokeObjectURL(url);
     setLog("Project JSON exported.");
@@ -2547,13 +3029,24 @@ export default function App() {
       if (event.key === "Alt") {
         setAltSnapDisabled(true);
       }
-      if (isTypingTarget(event.target)) return;
 
       if (event.code === "Space") {
+        const target = event.target;
+        if (target instanceof HTMLElement) {
+          const tag = target.tagName.toLowerCase();
+          if (tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable) {
+            return;
+          }
+        }
         event.preventDefault();
+        if (event.repeat) {
+          return;
+        }
         togglePlayback();
         return;
       }
+
+      if (isTypingTarget(event.target)) return;
 
       if (event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -3133,41 +3626,46 @@ export default function App() {
       setLog("Track is locked.");
       return;
     }
+    if (preferredTrackId) {
+      const preferredTrack = project.timeline.tracks.find((track) => track.id === preferredTrackId);
+      if (preferredTrack && preferredTrack.kind === "audio") {
+        setLog("Drop rejected: visual assets can only be dropped on visual tracks.");
+        return;
+      }
+    }
 
     setProjectWithNormalize((prev) => {
-      const tracks = [...prev.timeline.tracks];
-      let videoTrackIndex =
-        preferredTrackId != null ? tracks.findIndex((track) => track.id === preferredTrackId) : -1;
-      if (videoTrackIndex >= 0 && tracks[videoTrackIndex].kind !== "video") {
-        videoTrackIndex = -1;
-      }
-      if (videoTrackIndex >= 0 && tracks[videoTrackIndex].locked) {
-        return prev;
-      }
-      if (videoTrackIndex === -1) {
-        videoTrackIndex = tracks.findIndex((track) => track.kind === "video" && !track.locked);
-      }
-      if (videoTrackIndex === -1) {
-        let nextVideoIndex = 1;
-        let nextVideoId = `video-${nextVideoIndex}`;
-        while (tracks.some((track) => track.id === nextVideoId)) {
-          nextVideoIndex += 1;
-          nextVideoId = `video-${nextVideoIndex}`;
+      let tracks = [...prev.timeline.tracks];
+      let visualTrackIndex = -1;
+      if (preferredTrackId != null) {
+        const preferredIndex = tracks.findIndex((track) => track.id === preferredTrackId);
+        const preferredTrack = preferredIndex >= 0 ? tracks[preferredIndex] : null;
+        if (!preferredTrack || preferredTrack.kind === "audio") return prev;
+        if (preferredTrack?.locked) {
+          return prev;
         }
-        tracks.push({ id: nextVideoId, kind: "video", muted: false, locked: false, visible: true, clips: [] });
-        videoTrackIndex = tracks.length - 1;
+        visualTrackIndex = preferredIndex;
       }
 
-      const videoTrack = { ...tracks[videoTrackIndex], clips: [...tracks[videoTrackIndex].clips] };
+      if (visualTrackIndex === -1) {
+        const resolved = findOrCreateUnlockedTrack(tracks, "video");
+        if (!resolved) return prev;
+        tracks = resolved.tracks;
+        visualTrackIndex = resolved.trackIndex;
+      }
+
+      const visualTrack = { ...tracks[visualTrackIndex], clips: [...tracks[visualTrackIndex].clips] };
       const nextStartMs =
         typeof preferredStartMs === "number" && Number.isFinite(preferredStartMs)
           ? Math.max(0, Math.round(preferredStartMs))
-          : videoTrack.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
+          : visualTrack.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
       const durationMs = Math.max(
         MIN_CLIP_DURATION_MS,
         Math.round((asset.durationMs ?? videoDurationMs ?? 3000)),
       );
       const clipId = `clip-${crypto.randomUUID().slice(0, 8)}`;
+      const shouldCreateLinkedAudio = asset.hasAudio !== false;
+      const linkGroupId = shouldCreateLinkedAudio ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined;
       const clip: Clip = {
         id: clipId,
         label: asset.name ?? "video",
@@ -3176,22 +3674,56 @@ export default function App() {
         durationMs,
         inMs: 0,
         outMs: durationMs,
+        mediaRole: visualTrack.kind === "overlay" ? "overlay" : "video",
+        linkGroupId,
+        linkLocked: Boolean(linkGroupId),
       };
 
-      videoTrack.clips.push(clip);
-      tracks[videoTrackIndex] = videoTrack;
+      visualTrack.clips.push(clip);
+      tracks[visualTrackIndex] = visualTrack;
+
+      if (shouldCreateLinkedAudio) {
+        const resolvedAudio = findOrCreateUnlockedTrack(tracks, "audio");
+        if (resolvedAudio) {
+          tracks = resolvedAudio.tracks;
+          const audioTrack = {
+            ...tracks[resolvedAudio.trackIndex],
+            clips: [...tracks[resolvedAudio.trackIndex].clips],
+          };
+          const audioClipId = `clip-${crypto.randomUUID().slice(0, 8)}`;
+          const audioClip: Clip = {
+            id: audioClipId,
+            label: `${asset.name ?? "video"} audio`,
+            assetId: asset.id,
+            startMs: nextStartMs,
+            durationMs,
+            inMs: 0,
+            outMs: durationMs,
+            mediaRole: "audio",
+            linkGroupId,
+            linkLocked: true,
+          };
+          audioTrack.clips.push(audioClip);
+          tracks[resolvedAudio.trackIndex] = audioTrack;
+        }
+      }
+
       const timelineDuration = Math.max(
         prev.timeline.durationMs,
         clip.startMs + clip.durationMs + 1000,
       );
 
-      setSelection({ trackId: videoTrack.id, clipId: clipId });
-      setSelectedClipKeys([clipKey(videoTrack.id, clipId)]);
+      setSelection({ trackId: visualTrack.id, clipId: clipId });
+      setSelectedClipKeys([clipKey(visualTrack.id, clipId)]);
       setPlayheadMs(clip.startMs);
       return { ...prev, timeline: { ...prev.timeline, durationMs: timelineDuration, tracks } };
     });
 
-    setLog(`Added ${asset.name ?? assetId} to timeline.`);
+    setLog(
+      asset.hasAudio !== false
+        ? `Added ${asset.name ?? assetId} to timeline (linked video/audio).`
+        : `Added ${asset.name ?? assetId} to timeline.`,
+    );
     setExportValidationMessage(null);
   };
 
@@ -3407,9 +3939,12 @@ export default function App() {
             onSplitClip={(trackId, clipId) => splitClipAt(trackId, clipId, playheadMs)}
             onDeleteClip={deleteClipById}
             onDuplicateClip={duplicateClip}
+            onDetachAudio={detachLinkedGroup}
+            onRelinkClip={relinkSelectedVideoAudio}
             onAddTrack={addTrack}
             onRemoveTrack={removeTrack}
             onToggleTrackFlag={toggleTrackFlag}
+            onDropRejected={setLog}
             assetMap={timelineAssetMap}
           />
         )}

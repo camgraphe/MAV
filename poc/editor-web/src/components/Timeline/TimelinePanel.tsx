@@ -8,6 +8,9 @@ type Clip = {
   durationMs: number;
   inMs: number;
   outMs: number;
+  mediaRole?: "video" | "audio" | "overlay";
+  linkGroupId?: string;
+  linkLocked?: boolean;
 };
 
 type Track = {
@@ -27,6 +30,7 @@ type Selection = {
 type AssetMeta = {
   id: string;
   kind: "video" | "audio" | "image";
+  hasAudio?: boolean;
   thumbnails?: string[];
   waveform?: number[];
 };
@@ -69,9 +73,12 @@ type TimelinePanelProps = {
   onSplitClip: (trackId: string, clipId: string) => void;
   onDeleteClip: (trackId: string, clipId: string) => void;
   onDuplicateClip: (trackId: string, clipId: string) => void;
+  onDetachAudio: (trackId: string, clipId: string) => void;
+  onRelinkClip: (trackId: string, clipId: string) => void;
   onAddTrack: (kind: "video" | "overlay" | "audio") => void;
   onRemoveTrack: (trackId: string) => void;
   onToggleTrackFlag: (trackId: string, key: "muted" | "locked" | "visible") => void;
+  onDropRejected: (message: string) => void;
   assetMap: Map<string, AssetMeta>;
 };
 
@@ -99,7 +106,17 @@ function overlapRect(
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
+function formatRulerTime(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const seconds = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
 const TRACK_LABEL_WIDTH = 156;
+const RULER_HEIGHT = 28;
 const LANE_HEIGHT = 60;
 const CLIP_TOP = 10;
 const CLIP_HEIGHT = 30;
@@ -142,9 +159,12 @@ export function TimelinePanel({
   onSplitClip,
   onDeleteClip,
   onDuplicateClip,
+  onDetachAudio,
+  onRelinkClip,
   onAddTrack,
   onRemoveTrack,
   onToggleTrackFlag,
+  onDropRejected,
   assetMap,
 }: TimelinePanelProps) {
   const selected = new Set(selectedClipKeys);
@@ -163,8 +183,27 @@ export function TimelinePanel({
   } | null>(null);
   const playheadDragRef = useRef<{ pointerId: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [viewportContentWidthPx, setViewportContentWidthPx] = useState(0);
   const hasAnyClip = tracks.some((track) => track.clips.length > 0);
   const timelineHeight = Math.max(180, tracks.length * LANE_HEIGHT + 8);
+  const firstAudioLane = tracks.findIndex((track) => track.kind === "audio");
+  const timelineContentWidthPx = Math.max(zoomWidthPx, viewportContentWidthPx);
+  const timelineWorkspaceWidthPx = TRACK_LABEL_WIDTH + timelineContentWidthPx;
+  const rulerStepMs = pixelsPerSecond >= 180 ? 500 : pixelsPerSecond >= 100 ? 1000 : 2000;
+  const maxRulerMs = Math.max(playheadMs, Math.round((timelineContentWidthPx / pixelsPerSecond) * 1000));
+  const rulerMarks = useMemo(() => {
+    const marks: Array<{ ms: number; x: number; major: boolean }> = [];
+    const step = Math.max(250, rulerStepMs);
+    for (let ms = 0; ms <= maxRulerMs; ms += step) {
+      marks.push({
+        ms,
+        x: (ms / 1000) * pixelsPerSecond,
+        major: ms % (step * 2) === 0,
+      });
+    }
+    return marks;
+  }, [maxRulerMs, pixelsPerSecond, rulerStepMs]);
 
   const clipLayout = useMemo(() => {
     return tracks.flatMap((track, rowIndex) =>
@@ -190,6 +229,26 @@ export function TimelinePanel({
     return () => window.removeEventListener("click", close);
   }, []);
 
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+
+    const measure = () => {
+      const next = Math.max(320, Math.round(scroller.clientWidth - TRACK_LABEL_WIDTH));
+      setViewportContentWidthPx((prev) => (prev === next ? prev : next));
+    };
+
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, []);
+
   const setZoom = (next: number) => {
     onZoomChange(Math.max(20, Math.min(240, Math.round(next))));
   };
@@ -207,7 +266,7 @@ export function TimelinePanel({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const x = Math.min(Math.max(0, clientX - rect.left), zoomWidthPx);
+    const x = Math.min(Math.max(0, clientX - rect.left), timelineContentWidthPx);
     const nextMs = Math.round((x / pixelsPerSecond) * 1000);
     onPlayheadChange(nextMs);
   };
@@ -239,7 +298,7 @@ export function TimelinePanel({
       window.removeEventListener("pointercancel", stopDrag);
       window.removeEventListener("blur", onWindowBlur);
     };
-  }, [pixelsPerSecond, zoomWidthPx, onPlayheadChange]);
+  }, [pixelsPerSecond, timelineContentWidthPx, onPlayheadChange]);
 
   return (
     <div className="timelinePanel">
@@ -370,6 +429,7 @@ export function TimelinePanel({
       </div>
 
       <div
+        ref={scrollerRef}
         className="timelineScroller"
         onWheel={(event) => {
           if (!event.ctrlKey) return;
@@ -378,11 +438,40 @@ export function TimelinePanel({
           setZoom(pixelsPerSecond + delta);
         }}
       >
-        <div className="timelineWorkspace" style={{ minWidth: `${TRACK_LABEL_WIDTH + zoomWidthPx}px` }}>
+        <div className="timelineWorkspace" style={{ minWidth: `${timelineWorkspaceWidthPx}px` }}>
+          <div className="timelineRulerSpacer" style={{ width: `${TRACK_LABEL_WIDTH}px`, height: `${RULER_HEIGHT}px` }} />
+          <div
+            className="timelineRuler"
+            style={{ width: `${timelineContentWidthPx}px`, height: `${RULER_HEIGHT}px` }}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              const rect = event.currentTarget.getBoundingClientRect();
+              const localX = Math.max(0, Math.min(event.clientX - rect.left, timelineContentWidthPx));
+              const nextMs = Math.round((localX / pixelsPerSecond) * 1000);
+              onPlayheadChange(nextMs);
+            }}
+          >
+            {rulerMarks.map((mark) => (
+              <div
+                key={`ruler-${mark.ms}`}
+                className={`timelineRulerTick ${mark.major ? "major" : "minor"}`}
+                style={{ left: `${mark.x}px` }}
+              >
+                {mark.major ? <span>{formatRulerTime(mark.ms)}</span> : null}
+              </div>
+            ))}
+            <div className="timelineRulerPlayhead" style={{ left: `${(playheadMs / 1000) * pixelsPerSecond}px` }} />
+          </div>
+
           <div className="trackColumn" style={{ width: `${TRACK_LABEL_WIDTH}px`, height: `${timelineHeight}px` }}>
             {tracks.map((track, rowIndex) => {
               return (
-                <div key={`header-${track.id}`} className="trackHeaderRow" style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}>
+                <div
+                  key={`header-${track.id}`}
+                  className={`trackHeaderRow ${firstAudioLane >= 0 && rowIndex === firstAudioLane ? "sectionStart" : ""}`}
+                  style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}
+                >
                   <strong>{trackDisplayName(track, tracks)}</strong>
                   <div className="trackHeaderActions">
                     <button
@@ -421,7 +510,7 @@ export function TimelinePanel({
           <div
             ref={canvasRef}
             className={`timelineCanvas timelineLanes ${showFilmstrip ? "filmstripOn" : "filmstripOff"} ${dragOver ? "dropActive" : ""}`}
-            style={{ width: `${zoomWidthPx}px`, height: `${timelineHeight}px` }}
+            style={{ width: `${timelineContentWidthPx}px`, height: `${timelineHeight}px` }}
             onPointerDown={(event) => {
               if (event.button !== 0) return;
               const target = event.target;
@@ -492,6 +581,22 @@ export function TimelinePanel({
               const lane = tracks[laneIndex];
               const startMs = Math.round((x / pixelsPerSecond) * 1000);
               if (!lane) return;
+              const asset = assetMap.get(assetId);
+              if (asset) {
+                const isVisualAsset = asset.kind === "video" || asset.kind === "image";
+                const isAudioAsset = asset.kind === "audio";
+                const isVisualLane = lane.kind !== "audio";
+                const isAudioLane = lane.kind === "audio";
+                const isCompatible = (isVisualAsset && isVisualLane) || (isAudioAsset && isAudioLane);
+                if (!isCompatible) {
+                  onDropRejected(
+                    isVisualAsset
+                      ? "Drop rejected: visual assets can only be dropped on visual tracks."
+                      : "Drop rejected: audio assets can only be dropped on audio tracks.",
+                  );
+                  return;
+                }
+              }
               onAssetDrop(assetId, lane.id, startMs);
             }}
           >
@@ -514,7 +619,11 @@ export function TimelinePanel({
 
             {tracks.map((track, rowIndex) => {
               return (
-                <div key={track.id} className="trackLane" style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}>
+                <div
+                  key={track.id}
+                  className={`trackLane ${firstAudioLane >= 0 && rowIndex === firstAudioLane ? "sectionStart" : ""}`}
+                  style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}
+                >
                   {track.clips.map((sourceClip) => {
                     const clip = getClipRenderState(track.id, sourceClip);
                     const asset = assetMap.get(sourceClip.assetId);
@@ -626,8 +735,23 @@ export function TimelinePanel({
           <button type="button" disabled>
             Speed (later)
           </button>
-          <button type="button" disabled>
-            Detach audio (later)
+          <button
+            type="button"
+            onClick={() => {
+              onDetachAudio(contextMenu.trackId, contextMenu.clipId);
+              setContextMenu(null);
+            }}
+          >
+            Detach audio
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onRelinkClip(contextMenu.trackId, contextMenu.clipId);
+              setContextMenu(null);
+            }}
+          >
+            Relink A/V
           </button>
         </div>
       ) : null}

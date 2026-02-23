@@ -7,6 +7,7 @@ type MediaAsset = {
   codec?: string;
   width?: number;
   height?: number;
+  hasAudio?: boolean;
   thumbnails?: string[];
   waveform?: number[];
 };
