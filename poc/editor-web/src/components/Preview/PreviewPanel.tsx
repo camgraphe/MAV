@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useState, type RefObject } from "react";
 
 type PreviewPanelProps = {
   programCanvasRef: RefObject<HTMLCanvasElement | null>;
@@ -55,46 +55,58 @@ export function PreviewPanel({
   onSourceScrub,
   onSourceStepFrame,
 }: PreviewPanelProps) {
+  const [showSourceMonitor, setShowSourceMonitor] = useState(true);
   const maxDuration = Math.max(1000, durationMs);
   const sourceMaxDuration = Math.max(1000, sourceDurationMs);
 
   return (
     <div className="previewPanel">
-      <div className="previewMonitors">
-        <section className="monitorCard">
-          <header className="monitorHeader">
-            <h3>Source</h3>
-          </header>
-          <div className="previewStage">
-            <canvas ref={sourceCanvasRef} width={960} height={540} className="previewCanvas" />
-          </div>
-          <div className="sourceControls">
-            <div className="playerButtons">
-              <button type="button" className="iconBtn" title="Previous source frame" onClick={() => onSourceStepFrame("backward")}>
-                ◀
-              </button>
-              <button type="button" className="iconBtn iconBtnStrong" title="Play/pause source" onClick={onSourceTogglePlay}>
-                {sourceIsPlaying ? "❚❚" : "▶"}
-              </button>
-              <button type="button" className="iconBtn" title="Next source frame" onClick={() => onSourceStepFrame("forward")}>
-                ▶
-              </button>
+      <div className={`previewMonitors ${showSourceMonitor ? "" : "programOnly"}`}>
+        {showSourceMonitor ? (
+          <section className="monitorCard">
+            <header className="monitorHeader">
+              <h3>Source</h3>
+            </header>
+            <div className="previewStage">
+              <canvas ref={sourceCanvasRef} width={960} height={540} className="previewCanvas" />
             </div>
-            <div className="playerScrubRow">
-              <input
-                type="range"
-                min={0}
-                max={sourceMaxDuration}
-                value={Math.min(sourceMaxDuration, Math.max(0, sourcePlayheadMs))}
-                onChange={(event) => onSourceScrub(Number(event.target.value))}
-              />
+            <div className="sourceControls">
+              <div className="playerButtons">
+                <button type="button" className="iconBtn" title="Previous source frame" onClick={() => onSourceStepFrame("backward")}>
+                  ◀
+                </button>
+                <button type="button" className="iconBtn iconBtnStrong" title="Play/pause source" onClick={onSourceTogglePlay}>
+                  {sourceIsPlaying ? "❚❚" : "▶"}
+                </button>
+                <button type="button" className="iconBtn" title="Next source frame" onClick={() => onSourceStepFrame("forward")}>
+                  ▶
+                </button>
+              </div>
+              <div className="playerScrubRow">
+                <input
+                  type="range"
+                  min={0}
+                  max={sourceMaxDuration}
+                  value={Math.min(sourceMaxDuration, Math.max(0, sourcePlayheadMs))}
+                  onChange={(event) => onSourceScrub(Number(event.target.value))}
+                />
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        ) : null}
 
         <section className="monitorCard">
           <header className="monitorHeader">
             <h3>Program</h3>
+            <button
+              type="button"
+              className={`iconBtn tiny ${showSourceMonitor ? "activeTool" : ""}`}
+              title={showSourceMonitor ? "Masquer la fenetre Source" : "Afficher la fenetre Source"}
+              aria-label={showSourceMonitor ? "Masquer la fenetre Source" : "Afficher la fenetre Source"}
+              onClick={() => setShowSourceMonitor((previous) => !previous)}
+            >
+              S
+            </button>
           </header>
           <div className="previewStage">
             <canvas ref={programCanvasRef} width={960} height={540} className="previewCanvas" />
