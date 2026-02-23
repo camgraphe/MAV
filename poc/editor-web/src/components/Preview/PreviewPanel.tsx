@@ -10,6 +10,13 @@ type PreviewPanelProps = {
   isPlaying: boolean;
   onTogglePlay: () => void;
   onScrub: (nextMs: number) => void;
+  onStepFrame: (direction: "forward" | "backward") => void;
+  loopEnabled: boolean;
+  onLoopToggle: () => void;
+  markInMs: number | null;
+  markOutMs: number | null;
+  onSetMarkIn: () => void;
+  onSetMarkOut: () => void;
 };
 
 function formatTimecode(ms: number) {
@@ -33,6 +40,13 @@ export function PreviewPanel({
   isPlaying,
   onTogglePlay,
   onScrub,
+  onStepFrame,
+  loopEnabled,
+  onLoopToggle,
+  markInMs,
+  markOutMs,
+  onSetMarkIn,
+  onSetMarkOut,
 }: PreviewPanelProps) {
   const maxDuration = Math.max(1000, durationMs);
 
@@ -60,19 +74,46 @@ export function PreviewPanel({
       />
 
       <div className="playerControls">
-        <button type="button" onClick={onTogglePlay}>
-          {isPlaying ? "Pause" : "Play"}
-        </button>
-        <input
-          type="range"
-          min={0}
-          max={maxDuration}
-          value={Math.min(maxDuration, Math.max(0, playheadMs))}
-          onChange={(event) => onScrub(Number(event.target.value))}
-        />
-        <span className="timecode">
-          {formatTimecode(playheadMs)} / {formatTimecode(maxDuration)}
-        </span>
+        <div className="playerButtons">
+          <button type="button" onClick={() => onStepFrame("backward")}>
+            ◀ Frame
+          </button>
+          <button type="button" onClick={onTogglePlay}>
+            {isPlaying ? "Pause" : "Play"}
+          </button>
+          <button type="button" onClick={() => onStepFrame("forward")}>
+            Frame ▶
+          </button>
+          <button type="button" className={loopEnabled ? "activeTool" : ""} onClick={onLoopToggle}>
+            Loop
+          </button>
+        </div>
+
+        <div className="playerScrubRow">
+          <input
+            type="range"
+            min={0}
+            max={maxDuration}
+            value={Math.min(maxDuration, Math.max(0, playheadMs))}
+            onChange={(event) => onScrub(Number(event.target.value))}
+          />
+          <span className="timecode">
+            {formatTimecode(playheadMs)} / {formatTimecode(maxDuration)}
+          </span>
+        </div>
+
+        <div className="playerMarks">
+          <button type="button" onClick={onSetMarkIn}>
+            Mark In (I)
+          </button>
+          <button type="button" onClick={onSetMarkOut}>
+            Mark Out (O)
+          </button>
+          <span className="timecode">
+            In: {markInMs != null ? formatTimecode(markInMs) : "--:--.---"} | Out:{" "}
+            {markOutMs != null ? formatTimecode(markOutMs) : "--:--.---"}
+          </span>
+        </div>
       </div>
     </div>
   );

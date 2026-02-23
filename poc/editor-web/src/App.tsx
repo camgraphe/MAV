@@ -559,6 +559,9 @@ export default function App() {
   const [showFilmstrip, setShowFilmstrip] = useState(true);
   const [log, setLog] = useState("Ready.");
   const [isPlaying, setIsPlaying] = useState(false);
+  const [loopPlayback, setLoopPlayback] = useState(false);
+  const [markInMs, setMarkInMs] = useState<number | null>(null);
+  const [markOutMs, setMarkOutMs] = useState<number | null>(null);
   const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
 
@@ -638,9 +641,8 @@ export default function App() {
   );
   const devMode = useMemo(() => {
     const searchDev = new URLSearchParams(window.location.search).get("dev") === "1";
-    if (!searchDev) return false;
-    if (!import.meta.env.PROD) return true;
-    return window.localStorage.getItem("mavDev") === "1";
+    const lsDev = window.localStorage.getItem("mavDev") === "1";
+    return searchDev && lsDev;
   }, []);
   const renderWorkerBaseUrl = useMemo(
     () => (import.meta.env.VITE_RENDER_WORKER_URL as string | undefined) ?? "http://localhost:8790",
@@ -1213,6 +1215,44 @@ export default function App() {
     });
   };
 
+  const deleteClipById = (trackId: string, clipId: string) => {
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.map((track) =>
+        track.id === trackId ? { ...track, clips: track.clips.filter((clip) => clip.id !== clipId) } : track,
+      );
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+    if (selection?.trackId === trackId && selection.clipId === clipId) {
+      setSelection(null);
+    }
+    setSelectedClipKeys((prev) => prev.filter((key) => key !== clipKey(trackId, clipId)));
+  };
+
+  const duplicateClip = (trackId: string, clipId: string) => {
+    setProjectWithNormalize((prev) => {
+      const track = prev.timeline.tracks.find((item) => item.id === trackId);
+      if (!track) return prev;
+      const source = track.clips.find((clip) => clip.id === clipId);
+      if (!source) return prev;
+
+      const duplicateId = `${source.id}-copy-${crypto.randomUUID().slice(0, 4)}`;
+      const startMs = source.startMs + source.durationMs;
+      const duplicated: Clip = {
+        ...source,
+        id: duplicateId,
+        label: `${source.label} Copy`,
+        startMs,
+        outMs: source.inMs + source.durationMs,
+      };
+      const tracks = prev.timeline.tracks.map((item) =>
+        item.id === trackId ? { ...item, clips: sortClips([...item.clips, duplicated]) } : item,
+      );
+      setSelection({ trackId, clipId: duplicateId });
+      setSelectedClipKeys([clipKey(trackId, duplicateId)]);
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
+  };
+
   const addOverlayClip = () => {
     setProjectWithNormalize((prev) => {
       const tracks = prev.timeline.tracks.map((track) => {
@@ -1406,6 +1446,27 @@ export default function App() {
 
   const togglePlayback = () => {
     setIsPlaying((prev) => !prev);
+  };
+
+  const stepFrame = (direction: "forward" | "backward") => {
+    stopPlayback();
+    const frameMs = Math.max(1, Math.round(1000 / Math.max(1, decoderFps)));
+    const delta = direction === "forward" ? frameMs : -frameMs;
+    setPlayheadMs((prev) => clamp(prev + delta, 0, project.timeline.durationMs));
+  };
+
+  const setMarkInAtPlayhead = () => {
+    setMarkInMs(playheadMs);
+    if (markOutMs != null && markOutMs < playheadMs) {
+      setMarkOutMs(playheadMs);
+    }
+  };
+
+  const setMarkOutAtPlayhead = () => {
+    setMarkOutMs(playheadMs);
+    if (markInMs != null && markInMs > playheadMs) {
+      setMarkInMs(playheadMs);
+    }
   };
 
   const clearExportPolling = () => {
@@ -1893,7 +1954,12 @@ export default function App() {
       playback.lastTs = ts;
       const deltaMs = Math.min(PLAYBACK_TICK_LIMIT_MS, Math.max(0, ts - previousTs));
       setPlayheadMs((prev) => {
+        const loopStart = markInMs ?? 0;
+        const loopEnd = markOutMs != null ? Math.min(project.timeline.durationMs, markOutMs) : project.timeline.durationMs;
         const next = prev + deltaMs;
+        if (loopPlayback && loopEnd > loopStart && next >= loopEnd) {
+          return loopStart;
+        }
         if (next >= project.timeline.durationMs) {
           stopPlayback();
           return project.timeline.durationMs;
@@ -1911,7 +1977,7 @@ export default function App() {
       }
       playback.lastTs = null;
     };
-  }, [isPlaying, project.timeline.durationMs]);
+  }, [isPlaying, loopPlayback, markInMs, markOutMs, project.timeline.durationMs]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1923,6 +1989,36 @@ export default function App() {
       if (event.code === "Space") {
         event.preventDefault();
         togglePlayback();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        stopPlayback();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        setIsPlaying(true);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        stepFrame("backward");
+        return;
+      }
+
+      if (event.key.toLowerCase() === "i") {
+        event.preventDefault();
+        setMarkInAtPlayhead();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "o") {
+        event.preventDefault();
+        setMarkOutAtPlayhead();
         return;
       }
 
@@ -1991,7 +2087,7 @@ export default function App() {
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onWindowBlur);
     };
-  }, [decoderFps, nudgeSelected, redo, removeSelected, splitSelected, togglePlayback, undo]);
+  }, [decoderFps, nudgeSelected, redo, removeSelected, splitSelected, togglePlayback, undo, stopPlayback, stepFrame, setMarkInAtPlayhead, setMarkOutAtPlayhead]);
 
   useEffect(() => {
     if (mainTrackMagnet && collisionMode === "allow-overlap") {
@@ -2405,9 +2501,29 @@ export default function App() {
     setPlayheadMs(clamp(Math.round(value), 0, project.timeline.durationMs));
   };
 
+  const setSelectionFromKeys = (keys: string[], primary?: { trackId: string; clipId: string } | null) => {
+    const sanitized = keys.filter((key) => {
+      const [trackId, clipId] = key.split(":");
+      return clipExists(trackId, clipId);
+    });
+    setSelectedClipKeys(sanitized);
+    if (primary) {
+      setSelection(primary);
+      return;
+    }
+    const fallback = sanitized[0];
+    if (!fallback) {
+      setSelection(null);
+      return;
+    }
+    const [trackId, clipId] = fallback.split(":");
+    setSelection({ trackId, clipId });
+  };
+
   const timelineStatus = `Ready | Selected: ${selectedClipCount} | Ripple: ${rippleMode}`;
   const diagnosticsEnabled = devMode && diagnosticsVisible;
   const exportCanStart = canStartExport();
+  const timelineAssetMap = useMemo(() => new Map(project.assets.map((asset) => [asset.id, asset])), [project.assets]);
 
   return (
     <>
@@ -2466,6 +2582,13 @@ export default function App() {
             isPlaying={isPlaying}
             onTogglePlay={togglePlayback}
             onScrub={setPlayheadClamped}
+            onStepFrame={stepFrame}
+            loopEnabled={loopPlayback}
+            onLoopToggle={() => setLoopPlayback((prev) => !prev)}
+            markInMs={markInMs}
+            markOutMs={markOutMs}
+            onSetMarkIn={setMarkInAtPlayhead}
+            onSetMarkOut={setMarkOutAtPlayhead}
           />
         )}
         inspector={(
@@ -2523,6 +2646,12 @@ export default function App() {
             onAssetDrop={(assetId, trackId, startMs) => {
               addAssetToTimeline(assetId, trackId, startMs);
             }}
+            onSelectClipKeys={setSelectionFromKeys}
+            onClearSelection={() => setSelectionFromKeys([])}
+            onSplitClip={(trackId, clipId) => splitClipAt(trackId, clipId, playheadMs)}
+            onDeleteClip={deleteClipById}
+            onDuplicateClip={duplicateClip}
+            assetMap={timelineAssetMap}
           />
         )}
         diagnostics={
