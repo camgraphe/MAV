@@ -1,67 +1,182 @@
-import type { RefObject } from "react";
+import { useState, type RefObject } from "react";
 
 type PreviewPanelProps = {
-  canvasRef: RefObject<HTMLCanvasElement | null>;
-  fallbackVideoRef: RefObject<HTMLVideoElement | null>;
-  videoUrl: string | null;
-  onLoadedMetadata: (durationMs: number) => void;
-  decoderMode: "none" | "webcodecs" | "fallback";
-  webCodecsAvailable: boolean;
-  sourceDetails: {
-    codec: string | null;
-    codedWidth: number | null;
-    codedHeight: number | null;
-    descriptionLength: number | null;
-    timestampAuditIssueCount: number | null;
-  };
-  isFmp4Source: boolean;
+  programCanvasRef: RefObject<HTMLCanvasElement | null>;
+  programVideoRef: RefObject<HTMLVideoElement | null>;
+  sourceCanvasRef: RefObject<HTMLCanvasElement | null>;
+  sourceVideoRef: RefObject<HTMLVideoElement | null>;
+  programVideoUrl: string | null;
+  sourceVideoUrl: string | null;
+  onProgramLoadedMetadata: (durationMs: number, width: number, height: number) => void;
+  onSourceLoadedMetadata: (durationMs: number) => void;
+  playheadMs: number;
+  durationMs: number;
+  isPlaying: boolean;
+  onTogglePlay: () => void;
+  onScrub: (nextMs: number) => void;
+  onStepFrame: (direction: "forward" | "backward") => void;
+  loopEnabled: boolean;
+  onLoopToggle: () => void;
+  markInMs: number | null;
+  markOutMs: number | null;
+  onSetMarkIn: () => void;
+  onSetMarkOut: () => void;
+  sourcePlayheadMs: number;
+  sourceDurationMs: number;
+  sourceIsPlaying: boolean;
+  onSourceTogglePlay: () => void;
+  onSourceScrub: (nextMs: number) => void;
+  onSourceStepFrame: (direction: "forward" | "backward") => void;
 };
 
 export function PreviewPanel({
-  canvasRef,
-  fallbackVideoRef,
-  videoUrl,
-  onLoadedMetadata,
-  decoderMode,
-  webCodecsAvailable,
-  sourceDetails,
-  isFmp4Source,
+  programCanvasRef,
+  programVideoRef,
+  sourceCanvasRef,
+  sourceVideoRef,
+  programVideoUrl,
+  sourceVideoUrl,
+  onProgramLoadedMetadata,
+  onSourceLoadedMetadata,
+  playheadMs,
+  durationMs,
+  isPlaying,
+  onTogglePlay,
+  onScrub,
+  onStepFrame,
+  loopEnabled,
+  onLoopToggle,
+  markInMs,
+  markOutMs,
+  onSetMarkIn,
+  onSetMarkOut,
+  sourcePlayheadMs,
+  sourceDurationMs,
+  sourceIsPlaying,
+  onSourceTogglePlay,
+  onSourceScrub,
+  onSourceStepFrame,
 }: PreviewPanelProps) {
+  const [showSourceMonitor, setShowSourceMonitor] = useState(true);
+  const maxDuration = Math.max(1000, durationMs);
+  const sourceMaxDuration = Math.max(1000, sourceDurationMs);
+
   return (
-    <div>
-      <div className="panelHeader">
-        <h2>Preview</h2>
+    <div className="previewPanel">
+      <div className={`previewMonitors ${showSourceMonitor ? "" : "programOnly"}`}>
+        {showSourceMonitor ? (
+          <section className="monitorCard">
+            <header className="monitorHeader">
+              <h3>Source</h3>
+            </header>
+            <div className="previewStage">
+              <canvas ref={sourceCanvasRef} width={960} height={540} className="previewCanvas" />
+            </div>
+            <div className="sourceControls">
+              <div className="playerButtons">
+                <button type="button" className="iconBtn" title="Previous source frame" onClick={() => onSourceStepFrame("backward")}>
+                  ◀
+                </button>
+                <button type="button" className="iconBtn iconBtnStrong" title="Play/pause source" onClick={onSourceTogglePlay}>
+                  {sourceIsPlaying ? "❚❚" : "▶"}
+                </button>
+                <button type="button" className="iconBtn" title="Next source frame" onClick={() => onSourceStepFrame("forward")}>
+                  ▶
+                </button>
+              </div>
+              <div className="playerScrubRow">
+                <input
+                  type="range"
+                  min={0}
+                  max={sourceMaxDuration}
+                  value={Math.min(sourceMaxDuration, Math.max(0, sourcePlayheadMs))}
+                  onChange={(event) => onSourceScrub(Number(event.target.value))}
+                />
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="monitorCard">
+          <header className="monitorHeader">
+            <h3>Program</h3>
+            <button
+              type="button"
+              className={`iconBtn tiny ${showSourceMonitor ? "activeTool" : ""}`}
+              title={showSourceMonitor ? "Masquer la fenetre Source" : "Afficher la fenetre Source"}
+              aria-label={showSourceMonitor ? "Masquer la fenetre Source" : "Afficher la fenetre Source"}
+              onClick={() => setShowSourceMonitor((previous) => !previous)}
+            >
+              S
+            </button>
+          </header>
+          <div className="previewStage">
+            <canvas ref={programCanvasRef} width={960} height={540} className="previewCanvas" />
+          </div>
+          <div className="playerControls">
+            <div className="playerButtons">
+              <button type="button" className="iconBtn" title="Previous frame (J / ←)" onClick={() => onStepFrame("backward")}>
+                ◀
+              </button>
+              <button type="button" className="iconBtn iconBtnStrong" title="Play/Pause (Space/K)" onClick={onTogglePlay}>
+                {isPlaying ? "❚❚" : "▶"}
+              </button>
+              <button type="button" className="iconBtn" title="Next frame (L / →)" onClick={() => onStepFrame("forward")}>
+                ▶
+              </button>
+              <button
+                type="button"
+                className={`iconBtn ${loopEnabled ? "activeTool" : ""}`}
+                title="Loop playback"
+                onClick={onLoopToggle}
+              >
+                ↺
+              </button>
+              <button type="button" className="iconBtn" title="Mark in (I)" onClick={onSetMarkIn}>
+                I
+              </button>
+              <button type="button" className="iconBtn" title="Mark out (O)" onClick={onSetMarkOut}>
+                O
+              </button>
+            </div>
+
+            <div className="playerScrubRow">
+              <input
+                type="range"
+                min={0}
+                max={maxDuration}
+                value={Math.min(maxDuration, Math.max(0, playheadMs))}
+                onChange={(event) => onScrub(Number(event.target.value))}
+              />
+            </div>
+          </div>
+        </section>
       </div>
 
-      <canvas ref={canvasRef} width={960} height={540} className="previewCanvas" />
-
       <video
-        ref={fallbackVideoRef}
+        ref={programVideoRef}
         className="hiddenVideo"
-        src={videoUrl ?? undefined}
+        src={programVideoUrl ?? undefined}
         playsInline
         preload="auto"
         onLoadedMetadata={(event) => {
-          onLoadedMetadata(Math.round(event.currentTarget.duration * 1000));
+          onProgramLoadedMetadata(
+            Math.round(event.currentTarget.duration * 1000),
+            event.currentTarget.videoWidth,
+            event.currentTarget.videoHeight,
+          );
         }}
       />
-
-      <p className="hint">
-        Mode: <strong>{decoderMode}</strong>. WebCodecs available: <strong>{webCodecsAvailable ? "yes" : "no"}</strong>
-      </p>
-      <p className="hint">
-        Source: codec=<strong>{sourceDetails.codec ?? "n/a"}</strong>, coded=
-        <strong>
-          {sourceDetails.codedWidth ?? 0}x{sourceDetails.codedHeight ?? 0}
-        </strong>
-        , avcC bytes=<strong>{sourceDetails.descriptionLength ?? 0}</strong>, timestamp issues=
-        <strong>{sourceDetails.timestampAuditIssueCount ?? 0}</strong>
-      </p>
-      {isFmp4Source ? (
-        <p className="hint">
-          fMP4 detected: preview forced to HTMLVideoElement + RVFC fallback path.
-        </p>
-      ) : null}
+      <video
+        ref={sourceVideoRef}
+        className="hiddenVideo"
+        src={sourceVideoUrl ?? undefined}
+        playsInline
+        preload="auto"
+        onLoadedMetadata={(event) => {
+          onSourceLoadedMetadata(Math.round(event.currentTarget.duration * 1000));
+        }}
+      />
     </div>
   );
 }

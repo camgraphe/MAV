@@ -2,7 +2,7 @@
   "profile": "baseline-short-gop",
   "mediaFilename": "qa_h264_baseline_short_gop_aac.mp4",
   "mediaPath": "poc/editor-web/.qa-media/qa_h264_baseline_short_gop_aac.mp4",
-  "runAt": "2026-02-23T13:56:52.421Z",
+  "runAt": "2026-02-23T14:12:50.053Z",
   "status": "ok",
   "pass": true,
   "thresholds": {
@@ -12,10 +12,10 @@
   },
   "reasons": [],
   "metric": {
-    "runAt": "2026-02-23T13:56:52.415Z",
+    "runAt": "2026-02-23T14:12:50.047Z",
     "profile": "baseline-short-gop",
     "totalScenarios": 50,
-    "time_to_first_frame_ms": 7.593877549682345,
+    "time_to_first_frame_ms": 7.612244899783816,
     "seek_success_pct": 98,
     "decode_errors": 0,
     "stale_results": 1,
@@ -39,7 +39,7 @@
       "timestampUs": 458333,
       "status": "ok",
       "fromCache": false,
-      "decodeMs": 3.699999988079071,
+      "decodeMs": 3.800000011920929,
       "skippedToIdrSamples": 0,
       "keyframeStartUs": 0,
       "reason": "qa"

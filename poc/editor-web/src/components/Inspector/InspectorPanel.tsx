@@ -17,18 +17,36 @@ type Clip = {
 
 type InspectorPanelProps = {
   selectedClip: Clip | null;
+  selectedCount?: number;
   onUpdateTiming: (patch: Partial<Pick<Clip, "startMs" | "durationMs" | "inMs" | "outMs">>) => void;
   onUpdateTransform: (patch: Partial<OverlayTransform>) => void;
 };
 
-export function InspectorPanel({ selectedClip, onUpdateTiming, onUpdateTransform }: InspectorPanelProps) {
+export function InspectorPanel({
+  selectedClip,
+  selectedCount = 0,
+  onUpdateTiming,
+  onUpdateTransform,
+}: InspectorPanelProps) {
   return (
     <div className="inspector">
       <div className="panelHeader">
         <h2>Inspector</h2>
       </div>
 
-      {!selectedClip ? <p className="hint">Select a clip to edit properties.</p> : null}
+      {!selectedClip ? (
+        <div className="inspectorEmptyState">
+          <p className="hint">Select a clip to edit properties.</p>
+          <p className="hint">Quick start checklist:</p>
+          <ul>
+            <li>Upload media in the Media tab.</li>
+            <li>Drag an asset into the timeline.</li>
+            <li>Use `S` to split and `Delete` to remove clips.</li>
+            <li>Press `Space` to play or pause preview.</li>
+          </ul>
+        </div>
+      ) : null}
+      {selectedCount > 1 ? <p className="hint">{selectedCount} clips selected (editing primary selection).</p> : null}
 
       {selectedClip ? (
         <>
