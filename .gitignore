@@ -3,5 +3,4 @@ dist
 .DS_Store
 .env
 .env.local
-pnpm-lock.yaml
 poc/editor-web/.qa-media/

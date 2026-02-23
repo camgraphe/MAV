@@ -25,6 +25,23 @@ function sleep(ms) {
   });
 }
 
+async function runCommand(command, commandArgs, cwd) {
+  await new Promise((resolve, reject) => {
+    const child = spawn(command, commandArgs, {
+      cwd,
+      stdio: "inherit",
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve(null);
+        return;
+      }
+      reject(new Error(`${command} ${commandArgs.join(" ")} exited with code ${code ?? "null"}`));
+    });
+  });
+}
+
 async function waitForUrl(url, timeoutMs) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -118,6 +135,7 @@ async function retry(action, retries = 1) {
 
 async function main() {
   const startServer = hasFlag("--start-server");
+  const serverMode = getArg("--server-mode", "preview");
   const enforceThresholds = hasFlag("--enforce-thresholds");
   const scenarioCount = Number(getArg("--scenarios", "50"));
   const port = Number(getArg("--port", "4174"));
@@ -154,19 +172,47 @@ async function main() {
   let context = null;
   try {
     if (startServer) {
+      if (serverMode !== "dev" && serverMode !== "preview") {
+        throw new Error(`Unsupported --server-mode value: ${serverMode}`);
+      }
+
+      if (serverMode === "preview") {
+        await runCommand(
+          "pnpm",
+          ["--filter", "@mav/poc-editor-web", "build"],
+          rootDir,
+        );
+      }
+
+      const serverArgs =
+        serverMode === "preview"
+          ? [
+              "--filter",
+              "@mav/poc-editor-web",
+              "exec",
+              "vite",
+              "preview",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              String(port),
+              "--strictPort",
+            ]
+          : [
+              "--filter",
+              "@mav/poc-editor-web",
+              "exec",
+              "vite",
+              "--host",
+              "127.0.0.1",
+              "--port",
+              String(port),
+              "--strictPort",
+            ];
+
       serverProcess = spawn(
         "pnpm",
-        [
-          "--filter",
-          "@mav/poc-editor-web",
-          "exec",
-          "vite",
-          "--host",
-          "127.0.0.1",
-          "--port",
-          String(port),
-          "--strictPort",
-        ],
+        serverArgs,
         {
           cwd: rootDir,
           stdio: ["ignore", "pipe", "pipe"],
@@ -186,13 +232,22 @@ async function main() {
     await mkdir(outputDir, { recursive: true });
     await mkdir(path.join(outputDir, "history"), { recursive: true });
 
+    const browserChannel = process.env.PLAYWRIGHT_CHANNEL?.trim() || null;
     browser = await chromium.launch({
       headless: process.env.HEADLESS !== "false",
+      ...(browserChannel ? { channel: browserChannel } : {}),
     });
 
     context = await browser.newContext();
     const page = await context.newPage();
     page.setDefaultTimeout(120_000);
+
+    // Warm-up navigation to absorb Vite dependency optimization reloads in fresh CI runners.
+    await retry(async () => {
+      await page.goto(appUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForFunction(() => Boolean(window.__MAV_DECODE_QA__));
+      await sleep(1200);
+    }, 2);
 
     const outputs = [];
     const outlierCandidates = [];
@@ -215,6 +270,7 @@ async function main() {
       await retry(async () => {
         await page.goto(appUrl, { waitUntil: "domcontentloaded" });
         await page.waitForFunction(() => Boolean(window.__MAV_DECODE_QA__));
+        await sleep(200);
       }, 1);
 
       await retry(async () => {
@@ -226,7 +282,10 @@ async function main() {
         });
       }, 1);
 
-      const state = await page.evaluate(() => window.__MAV_DECODE_QA__?.getState() ?? null);
+      const state = await retry(
+        () => page.evaluate(() => window.__MAV_DECODE_QA__?.getState() ?? null),
+        2,
+      );
       let record;
 
       if (profile === "fmp4" || state?.isFmp4Source) {
@@ -257,19 +316,42 @@ async function main() {
         );
 
         const metric = runPayload?.metric ?? null;
+        const source = runPayload?.diagnostics?.source ?? null;
+        const sourceDecoderMode = source?.decoderMode ?? null;
+        const sourceCodec = String(source?.codec ?? "");
+        const unsupportedAvcWebCodecs =
+          sourceDecoderMode !== "webcodecs" && /(avc1|avc3|h264)/i.test(sourceCodec);
+
         const thresholdCheck = evaluateThreshold(metric, thresholds);
-        record = {
-          profile,
-          mediaFilename: entry.filename,
-          mediaPath: entry.path,
-          runAt: new Date().toISOString(),
-          status: thresholdCheck.pass ? "ok" : "threshold-failed",
-          pass: thresholdCheck.pass,
-          thresholds,
-          reasons: thresholdCheck.reasons,
-          metric,
-          diagnostics: runPayload?.diagnostics ?? null,
-        };
+        if (!metric && unsupportedAvcWebCodecs) {
+          record = {
+            profile,
+            mediaFilename: entry.filename,
+            mediaPath: entry.path,
+            runAt: new Date().toISOString(),
+            status: "skipped-unsupported-webcodecs-codec",
+            pass: true,
+            thresholds,
+            reasons: [
+              `WebCodecs unsupported for source codec on this runner: ${sourceCodec || "unknown"}.`,
+            ],
+            metric: null,
+            diagnostics: runPayload?.diagnostics ?? null,
+          };
+        } else {
+          record = {
+            profile,
+            mediaFilename: entry.filename,
+            mediaPath: entry.path,
+            runAt: new Date().toISOString(),
+            status: thresholdCheck.pass ? "ok" : "threshold-failed",
+            pass: thresholdCheck.pass,
+            thresholds,
+            reasons: thresholdCheck.reasons,
+            metric,
+            diagnostics: runPayload?.diagnostics ?? null,
+          };
+        }
 
         outlierCandidates.push(
           ...toOutlierCandidates({
@@ -288,8 +370,12 @@ async function main() {
       await writeFile(historyPath, JSON.stringify(record, null, 2));
 
       outputs.push(record);
+      const reasonSuffix =
+        Array.isArray(record.reasons) && record.reasons.length > 0
+          ? ` reasons=${record.reasons.join(" | ")}`
+          : "";
       console.log(
-        `${profile}: ${record.status} (${record.pass ? "pass" : "fail"}) -> ${path.relative(rootDir, latestPath)}`,
+        `${profile}: ${record.status} (${record.pass ? "pass" : "fail"}) -> ${path.relative(rootDir, latestPath)}${reasonSuffix}`,
       );
     }
 
@@ -327,7 +413,9 @@ async function main() {
 
     const failed = outputs.filter((item) => !item.pass);
     if (failed.length > 0) {
-      console.error(`QA decode failures: ${failed.map((item) => item.profile).join(", ")}`);
+      console.error(
+        `QA decode failures: ${failed.map((item) => `${item.profile}[${(item.reasons ?? []).join(";")}]`).join(", ")}`,
+      );
       if (enforceThresholds) {
         process.exitCode = 1;
       }

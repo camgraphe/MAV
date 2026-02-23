@@ -2,7 +2,7 @@
   "profile": "no-audio",
   "mediaFilename": "chromium_bear_silent.mp4",
   "mediaPath": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
-  "runAt": "2026-02-23T13:03:48.208Z",
+  "runAt": "2026-02-23T13:56:57.359Z",
   "status": "ok",
   "pass": true,
   "thresholds": {
@@ -12,10 +12,10 @@
   },
   "reasons": [],
   "metric": {
-    "runAt": "2026-02-23T13:03:48.204Z",
+    "runAt": "2026-02-23T13:56:57.355Z",
     "profile": "no-audio",
     "totalScenarios": 50,
-    "time_to_first_frame_ms": 1.7700000023841858,
+    "time_to_first_frame_ms": 1.95,
     "seek_success_pct": 100,
     "decode_errors": 0,
     "stale_results": 0,
@@ -39,7 +39,7 @@
       "timestampUs": 367033,
       "status": "ok",
       "fromCache": true,
-      "decodeMs": 0,
+      "decodeMs": 0.09999999403953552,
       "skippedToIdrSamples": 0,
       "keyframeStartUs": null,
       "reason": "qa"

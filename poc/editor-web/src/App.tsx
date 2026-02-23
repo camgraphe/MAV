@@ -4,6 +4,13 @@ import type {
   DecodeWorkerInMessage,
   DecodeWorkerOutMessage,
 } from "./preview/protocol";
+import { EditorShell } from "./components/EditorShell/EditorShell";
+import { TopToolbar } from "./components/EditorShell/TopToolbar";
+import { TimelinePanel } from "./components/Timeline/TimelinePanel";
+import { PreviewPanel } from "./components/Preview/PreviewPanel";
+import { InspectorPanel } from "./components/Inspector/InspectorPanel";
+import { MediaBinPanel } from "./components/MediaBin/MediaBinPanel";
+import { DiagnosticsPanel } from "./components/Diagnostics/DiagnosticsPanel";
 
 type TrackKind = "video" | "overlay" | "audio";
 
@@ -41,7 +48,13 @@ type ProjectState = {
     width: number;
     height: number;
   };
-  assets: Array<{ id: string; kind: "video" | "audio" | "image"; url: string; durationMs?: number }>;
+  assets: Array<{
+    id: string;
+    kind: "video" | "audio" | "image";
+    url: string;
+    durationMs?: number;
+    name?: string;
+  }>;
   timeline: {
     durationMs: number;
     tracks: Track[];
@@ -220,48 +233,17 @@ function createInitialProject(): ProjectState {
         {
           id: "video-1",
           kind: "video",
-          clips: [
-            {
-              id: "clip-1",
-              label: "shot-01",
-              assetId: "asset-video-1",
-              startMs: 0,
-              durationMs: 5000,
-              inMs: 0,
-              outMs: 5000,
-            },
-          ],
+          clips: [],
         },
         {
           id: "overlay-1",
           kind: "overlay",
-          clips: [
-            {
-              id: "overlay-title",
-              label: "title",
-              assetId: "asset-overlay-title",
-              startMs: 600,
-              durationMs: 1800,
-              inMs: 0,
-              outMs: 1800,
-              transform: { x: 0, y: 0, scale: 1, rotation: 0 },
-            },
-          ],
+          clips: [],
         },
         {
           id: "audio-1",
           kind: "audio",
-          clips: [
-            {
-              id: "music-1",
-              label: "music",
-              assetId: "asset-audio-1",
-              startMs: 0,
-              durationMs: 5000,
-              inMs: 0,
-              outMs: 5000,
-            },
-          ],
+          clips: [],
         },
       ],
     },
@@ -491,7 +473,7 @@ function buildQATargets(durationUs: number, count: number, seed: number): number
 export default function App() {
   const [project, setProject] = useState<ProjectState>(createInitialProject);
   const [playheadMs, setPlayheadMs] = useState(1200);
-  const [selection, setSelection] = useState<Selection | null>({ trackId: "video-1", clipId: "clip-1" });
+  const [selection, setSelection] = useState<Selection | null>(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(80);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [snapMs, setSnapMs] = useState(100);
@@ -499,6 +481,8 @@ export default function App() {
   const [log, setLog] = useState("Ready.");
 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
+  const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
   const [videoDurationMs, setVideoDurationMs] = useState<number>(0);
   const [isFmp4Source, setIsFmp4Source] = useState(false);
   const [decoderMode, setDecoderMode] = useState<"none" | "webcodecs" | "fallback">("none");
@@ -546,9 +530,14 @@ export default function App() {
 
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fallbackVideoRef = useRef<HTMLVideoElement | null>(null);
+  const assetFilesRef = useRef<Map<string, File>>(new Map());
 
   const webCodecsAvailable = useMemo(
     () => typeof VideoDecoder !== "undefined" && typeof VideoEncoder !== "undefined",
+    [],
+  );
+  const devMode = useMemo(
+    () => new URLSearchParams(window.location.search).get("dev") === "1",
     [],
   );
 
@@ -925,6 +914,42 @@ export default function App() {
     });
   };
 
+  const updateSelectedTiming = (patch: Partial<Pick<Clip, "startMs" | "durationMs" | "inMs" | "outMs">>) => {
+    updateSelectedClip((clip) => {
+      const nextStart = patch.startMs ?? clip.startMs;
+      const nextDuration = Math.max(MIN_CLIP_DURATION_MS, patch.durationMs ?? clip.durationMs);
+      const nextIn = patch.inMs ?? clip.inMs;
+      const nextOut = patch.outMs ?? nextIn + nextDuration;
+      return {
+        ...clip,
+        startMs: Math.max(0, nextStart),
+        durationMs: nextDuration,
+        inMs: Math.max(0, nextIn),
+        outMs: Math.max(nextIn, nextOut),
+      };
+    });
+  };
+
+  const updateSelectedTransform = (
+    patch: Partial<{
+      x: number;
+      y: number;
+      scale: number;
+      rotation: number;
+    }>,
+  ) => {
+    updateSelectedClip((clip) => {
+      if (!clip.transform) return clip;
+      return {
+        ...clip,
+        transform: {
+          ...clip.transform,
+          ...patch,
+        },
+      };
+    });
+  };
+
   const saveProject = () => {
     const normalized = normalizeProject(project);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
@@ -958,6 +983,14 @@ export default function App() {
     a.click();
     URL.revokeObjectURL(url);
     setLog("Project JSON exported.");
+  };
+
+  const undo = () => {
+    setLog("Undo is not wired yet (stub).");
+  };
+
+  const redo = () => {
+    setLog("Redo is not wired yet (stub).");
   };
 
   const appendDecoderLog = (line: string) => {
@@ -1414,11 +1447,10 @@ export default function App() {
     }
   }, [decoderMode, playheadUs, videoUrl]);
 
-  const onPickVideo = async (file: File | null) => {
-    if (!file) return;
-
-    const url = URL.createObjectURL(file);
+  const loadAssetForPreview = async (assetId: string, file: File, url: string) => {
     setVideoUrl(url);
+    setPreviewAssetId(assetId);
+    setActiveAssetId(assetId);
     setDecoderMode(webCodecsAvailable ? "none" : "fallback");
     setIsFmp4Source(false);
     setDecoderLogs([]);
@@ -1435,12 +1467,6 @@ export default function App() {
     lastSeekResultRef.current = null;
     latestHandledRequestIdRef.current = 0;
 
-    setProjectWithNormalize((prev) => {
-      const assets = prev.assets.filter((asset) => asset.id !== "asset-video-1");
-      assets.push({ id: "asset-video-1", kind: "video", url });
-      return { ...prev, assets };
-    });
-
     const worker = decodeWorkerRef.current;
     if (worker && webCodecsAvailable) {
       const buffer = await file.arrayBuffer();
@@ -1456,26 +1482,98 @@ export default function App() {
     } else {
       setDecoderMode("fallback");
     }
-
-    setLog(`Loaded video: ${file.name}`);
   };
 
-  const applyVideoDurationToClip = () => {
-    if (!videoDurationMs || videoDurationMs <= 0) return;
+  const onPickVideo = async (file: File | null) => {
+    if (!file) return;
+    const assetId = `asset-${crypto.randomUUID().slice(0, 8)}`;
+    const url = URL.createObjectURL(file);
+
+    assetFilesRef.current.set(assetId, file);
+    setProjectWithNormalize((prev) => ({
+      ...prev,
+      assets: [
+        ...prev.assets,
+        {
+          id: assetId,
+          kind: "video",
+          url,
+          name: file.name,
+        },
+      ],
+    }));
+
+    await loadAssetForPreview(assetId, file, url);
+    setLog(`Loaded media asset: ${file.name}`);
+  };
+
+  const onActivateAsset = async (assetId: string) => {
+    const file = assetFilesRef.current.get(assetId);
+    const asset = project.assets.find((item) => item.id === assetId);
+    if (!file || !asset || asset.kind !== "video") {
+      setLog("Cannot open asset for preview (missing local file).");
+      return;
+    }
+    await loadAssetForPreview(assetId, file, asset.url);
+    setLog(`Opened asset in preview: ${asset.name ?? asset.id}`);
+  };
+
+  const addAssetToTimeline = (assetId: string) => {
+    const asset = project.assets.find((item) => item.id === assetId && item.kind === "video");
+    if (!asset) {
+      setLog("Asset not found.");
+      return;
+    }
+
     setProjectWithNormalize((prev) => {
-      const tracks = prev.timeline.tracks.map((track) => {
-        if (track.kind !== "video" || track.clips.length === 0) return track;
-        const first = track.clips[0];
-        const clips = [...track.clips];
-        clips[0] = {
-          ...first,
-          durationMs: videoDurationMs,
-          outMs: first.inMs + videoDurationMs,
-        };
-        return { ...track, clips };
-      });
-      return { ...prev, timeline: { ...prev.timeline, tracks } };
+      const tracks = [...prev.timeline.tracks];
+      let videoTrackIndex = tracks.findIndex((track) => track.kind === "video");
+      if (videoTrackIndex === -1) {
+        tracks.push({ id: "video-1", kind: "video", clips: [] });
+        videoTrackIndex = tracks.length - 1;
+      }
+
+      const videoTrack = { ...tracks[videoTrackIndex], clips: [...tracks[videoTrackIndex].clips] };
+      const nextStartMs = videoTrack.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
+      const durationMs = Math.max(
+        MIN_CLIP_DURATION_MS,
+        Math.round((asset.durationMs ?? videoDurationMs ?? 3000)),
+      );
+      const clipId = `clip-${crypto.randomUUID().slice(0, 8)}`;
+      const clip: Clip = {
+        id: clipId,
+        label: asset.name ?? "video",
+        assetId: asset.id,
+        startMs: nextStartMs,
+        durationMs,
+        inMs: 0,
+        outMs: durationMs,
+      };
+
+      videoTrack.clips.push(clip);
+      tracks[videoTrackIndex] = videoTrack;
+      const timelineDuration = Math.max(
+        prev.timeline.durationMs,
+        clip.startMs + clip.durationMs + 1000,
+      );
+
+      setSelection({ trackId: videoTrack.id, clipId: clipId });
+      setPlayheadMs(clip.startMs);
+      return { ...prev, timeline: { ...prev.timeline, durationMs: timelineDuration, tracks } };
     });
+
+    setLog(`Added ${asset.name ?? assetId} to timeline.`);
+  };
+
+  const onPreviewMetadataLoaded = (durationMs: number) => {
+    setVideoDurationMs(durationMs);
+    if (!previewAssetId) return;
+    setProjectWithNormalize((prev) => ({
+      ...prev,
+      assets: prev.assets.map((asset) =>
+        asset.id === previewAssetId ? { ...asset, durationMs } : asset,
+      ),
+    }));
   };
 
   const zoomWidthPx = Math.max(
@@ -1484,336 +1582,100 @@ export default function App() {
   );
 
   return (
-    <main className="shell">
-      <header className="panel">
-        <h1>MAV PoC Editor Web</h1>
-        <p>
-          Week-1 continuation: MP4 demux + WebCodecs decode worker, lane drag/resize with snap,
-          deterministic save/load.
-        </p>
-      </header>
-
-      <section className="panel controls">
-        <div className="row2">
-          <label htmlFor="playhead">Playhead: {playheadMs} ms ({playheadUs} us)</label>
-          <input
-            id="playhead"
-            type="range"
-            min={0}
-            max={project.timeline.durationMs}
-            value={playheadMs}
-            onChange={(e) => setPlayheadMs(Number(e.target.value))}
-          />
-        </div>
-
-        <div className="row2">
-          <label htmlFor="zoom">Zoom (px/s): {pixelsPerSecond}</label>
-          <input
-            id="zoom"
-            type="range"
-            min={20}
-            max={240}
-            value={pixelsPerSecond}
-            onChange={(e) => setPixelsPerSecond(Number(e.target.value))}
-          />
-        </div>
-
-        <div className="buttons">
-          <button onClick={() => moveSelected(-250)}>Move -250ms</button>
-          <button onClick={() => moveSelected(250)}>Move +250ms</button>
-          <button onClick={() => trimSelectedStart(100)}>Trim Start +100ms</button>
-          <button onClick={() => trimSelectedStart(-100)}>Trim Start -100ms</button>
-          <button onClick={() => trimSelectedEnd(100)}>Trim End +100ms</button>
-          <button onClick={() => trimSelectedEnd(-100)}>Trim End -100ms</button>
-          <button onClick={splitSelected}>Split At Playhead</button>
-          <button onClick={addOverlayClip}>Add Overlay Clip</button>
-        </div>
-
-        <div className="toggles">
-          <label>
-            <input
-              type="checkbox"
-              checked={snapEnabled}
-              onChange={(e) => setSnapEnabled(e.target.checked)}
-            />
-            Snap
-          </label>
-          <label>
-            Snap ms
-            <input
-              type="number"
-              min={1}
-              value={snapMs}
-              onChange={(e) => setSnapMs(Math.max(1, Number(e.target.value) || 1))}
-            />
-          </label>
-          <label>
-            Collision
-            <select
-              value={collisionMode}
-              onChange={(e) => setCollisionMode(e.target.value as CollisionMode)}
-            >
-              <option value="no-overlap">No overlap</option>
-              <option value="push">Push forward</option>
-              <option value="allow-overlap">Allow overlap</option>
-            </select>
-          </label>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Timeline (pointer interactions)</h2>
-        <p className="hint">
-          Drag middle to move. Drag edge handles to trim. Pointer capture + rAF updates +
-          collision mode: {collisionMode}.
-        </p>
-        <div className="timelineScroller">
-          <div className="timelineCanvas" style={{ width: `${zoomWidthPx}px` }}>
-            <div
-              className="playhead"
-              style={{ left: `${(playheadMs / 1000) * pixelsPerSecond}px` }}
-            />
-            {snapGuideMs != null ? (
-              <div className="snapGuide" style={{ left: `${(snapGuideMs / 1000) * pixelsPerSecond}px` }} />
-            ) : null}
-
-            {project.timeline.tracks.map((track, rowIndex) => (
-              <div key={track.id} className="trackLane" style={{ top: `${rowIndex * 56}px` }}>
-                <div className="trackLabel">{track.id}</div>
-                {track.clips.map((sourceClip) => {
-                  const clip = getClipRenderState(track.id, sourceClip);
-                  const isSelected =
-                    selection?.trackId === track.id && selection?.clipId === sourceClip.id;
-                  return (
-                    <button
-                      key={sourceClip.id}
-                      className={`clipBlock ${isSelected ? "selected" : ""}`}
-                      style={{
-                        left: `${(clip.startMs / 1000) * pixelsPerSecond}px`,
-                        width: `${Math.max(24, (clip.durationMs / 1000) * pixelsPerSecond)}px`,
-                      }}
-                      onPointerDown={(event) => onClipPointerDown(event, track.id, sourceClip)}
-                    >
-                      <span className="clipHandle left" />
-                      <span className="clipLabel">{clip.label}</span>
-                      <span className="clipHandle right" />
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Decoded Preview</h2>
-        <div className="buttons">
-          <input
-            id="decode-input-file"
-            type="file"
-            accept="video/mp4,video/*"
-            onChange={(e) => onPickVideo(e.target.files?.[0] ?? null)}
-          />
-          <button onClick={applyVideoDurationToClip}>Apply Video Duration To Clip</button>
-          <label>
-            Timestamp audit samples
-            <input
-              type="number"
-              min={0}
-              max={64}
-              value={timestampAuditSamples}
-              onChange={(e) => setTimestampAuditSamples(Math.max(0, Math.min(64, Number(e.target.value) || 0)))}
-            />
-          </label>
-        </div>
-
-        <canvas ref={previewCanvasRef} width={960} height={540} className="previewCanvas" />
-
-        <video
-          ref={fallbackVideoRef}
-          className="hiddenVideo"
-          src={videoUrl ?? undefined}
-          playsInline
-          preload="auto"
-          onLoadedMetadata={(e) => {
-            const ms = Math.round(e.currentTarget.duration * 1000);
-            setVideoDurationMs(ms);
-          }}
+    <EditorShell
+      toolbar={(
+        <TopToolbar
+          playheadMs={playheadMs}
+          maxPlayheadMs={project.timeline.durationMs}
+          onPlayheadChange={setPlayheadMs}
+          pixelsPerSecond={pixelsPerSecond}
+          onZoomChange={setPixelsPerSecond}
+          onSplit={splitSelected}
+          onAddOverlay={addOverlayClip}
+          onUndo={undo}
+          onRedo={redo}
+          onExport={exportProjectJson}
+          onSave={saveProject}
+          onLoad={loadProject}
         />
-
-        <p className="hint">
-          Mode: <strong>{decoderMode}</strong>. WebCodecs API available: <strong>{webCodecsAvailable ? "yes" : "no"}</strong>
-        </p>
-        <p className="hint">
-          Source: codec=<strong>{sourceDetails.codec ?? "n/a"}</strong>, coded=<strong>{sourceDetails.codedWidth ?? 0}x{sourceDetails.codedHeight ?? 0}</strong>, avcC bytes=<strong>{sourceDetails.descriptionLength ?? 0}</strong>, timestamp issues=<strong>{sourceDetails.timestampAuditIssueCount ?? 0}</strong>
-        </p>
-        {isFmp4Source ? (
-          <p className="hint">
-            fMP4 detected: preview forced to HTMLVideoElement + RVFC fallback (`TELEMETRY:fmp4_preview_path=fallback_htmlvideo`).
-          </p>
-        ) : null}
-        <p className="hint">Debug tip: open Chrome DevTools Media panel while scrubbing.</p>
-
-        <pre>{decoderLogs.join("\n") || "Decoder logs will appear here."}</pre>
-      </section>
-
-      <section className="panel">
-        <h2>Decode QA Harness</h2>
-        <p className="hint">
-          Runs random + extremes + rapid drag seek clusters and records drift (target vs decoded
-          timestamp, pass threshold ±1 frame).
-        </p>
-
-        <div className="toggles">
-          <label>
-            Curated profile
-            <select id="decode-qa-profile" value={qaProfile} onChange={(e) => setQaProfile(e.target.value)}>
-              <option value="baseline-short-gop">Baseline / short GOP / AAC</option>
-              <option value="main-long-gop">Main / long GOP / AAC</option>
-              <option value="high-long-gop">High / long GOP / AAC</option>
-              <option value="no-audio">No audio track</option>
-              <option value="fmp4">Fragmented MP4 (fMP4)</option>
-            </select>
-          </label>
-          <label>
-            Scenarios
-            <input
-              id="decode-qa-scenarios"
-              type="number"
-              min={10}
-              max={200}
-              value={qaScenarioCount}
-              onChange={(e) => setQaScenarioCount(Number(e.target.value) || DEFAULT_QA_SCENARIOS)}
-            />
-          </label>
-          <button
-            id="decode-qa-run"
-            disabled={qaRunning || decoderMode !== "webcodecs"}
-            onClick={() => void runDecodeQA()}
-          >
-            {qaRunning ? "Running..." : "Run Decode QA"}
-          </button>
-          <button disabled={!lastRunResult} onClick={() => exportQARunResult(lastRunResult)}>
-            Export Last Result JSON
-          </button>
-        </div>
-
-        {qaMetric ? (
-          <pre data-testid="decode-qa-metric">{JSON.stringify(qaMetric, null, 2)}</pre>
-        ) : (
-          <p className="hint">Run QA after loading a video to populate metrics.</p>
-        )}
-        {lastRunResult?.diagnostics ? (
-          <pre>{JSON.stringify(lastRunResult.diagnostics, null, 2)}</pre>
-        ) : null}
-
-        <p className="hint">
-          Suggested set: Baseline/Main/High + long/short GOP + AAC/no-audio + one fMP4 sample.
-        </p>
-        <pre>{JSON.stringify(qaHistory, null, 2)}</pre>
-      </section>
-
-      <section className="panel">
-        <h2>Overlay Transform (selected clip)</h2>
-        {selectedClip?.transform ? (
-          <div className="transformGrid">
-            <label>
-              X
-              <input
-                type="number"
-                value={selectedClip.transform.x}
-                onChange={(e) =>
-                  updateSelectedClip((clip) => ({
-                    ...clip,
-                    transform: { ...clip.transform!, x: Number(e.target.value) },
-                  }))
-                }
-              />
-            </label>
-            <label>
-              Y
-              <input
-                type="number"
-                value={selectedClip.transform.y}
-                onChange={(e) =>
-                  updateSelectedClip((clip) => ({
-                    ...clip,
-                    transform: { ...clip.transform!, y: Number(e.target.value) },
-                  }))
-                }
-              />
-            </label>
-            <label>
-              Scale
-              <input
-                type="number"
-                step="0.1"
-                min="0.1"
-                value={selectedClip.transform.scale}
-                onChange={(e) =>
-                  updateSelectedClip((clip) => ({
-                    ...clip,
-                    transform: {
-                      ...clip.transform!,
-                      scale: Math.max(0.1, Number(e.target.value)),
-                    },
-                  }))
-                }
-              />
-            </label>
-            <label>
-              Rotation
-              <input
-                type="number"
-                value={selectedClip.transform.rotation}
-                onChange={(e) =>
-                  updateSelectedClip((clip) => ({
-                    ...clip,
-                    transform: { ...clip.transform!, rotation: Number(e.target.value) },
-                  }))
-                }
-              />
-            </label>
-          </div>
-        ) : (
-          <p className="hint">Select an overlay clip to edit transform values.</p>
-        )}
-      </section>
-
-      <section className="panel">
-        <h2>Persistence</h2>
-        <div className="buttons">
-          <button onClick={saveProject}>Save Local</button>
-          <button onClick={loadProject}>Load Local</button>
-          <button onClick={exportProjectJson}>Export JSON</button>
-          <button
-            onClick={() => {
-              setProject(createInitialProject());
-              setSelection({ trackId: "video-1", clipId: "clip-1" });
-              setPlayheadMs(1200);
-              setInteractionPreview(null);
-              setSnapGuideMs(null);
-              setQaMetric(null);
-              setLog("Reset to initial state.");
+      )}
+      mediaBin={(
+        <MediaBinPanel
+          assets={project.assets}
+          activeAssetId={activeAssetId}
+          onUpload={(file) => {
+            void onPickVideo(file);
+          }}
+          onActivateAsset={(assetId) => {
+            void onActivateAsset(assetId);
+          }}
+          onAddToTimeline={addAssetToTimeline}
+        />
+      )}
+      preview={(
+        <PreviewPanel
+          canvasRef={previewCanvasRef}
+          fallbackVideoRef={fallbackVideoRef}
+          videoUrl={videoUrl}
+          onLoadedMetadata={onPreviewMetadataLoaded}
+          decoderMode={decoderMode}
+          webCodecsAvailable={webCodecsAvailable}
+          sourceDetails={sourceDetails}
+          isFmp4Source={isFmp4Source}
+        />
+      )}
+      inspector={(
+        <InspectorPanel
+          selectedClip={selectedClip}
+          onUpdateTiming={updateSelectedTiming}
+          onUpdateTransform={updateSelectedTransform}
+        />
+      )}
+      timeline={(
+        <TimelinePanel
+          tracks={project.timeline.tracks}
+          playheadMs={playheadMs}
+          pixelsPerSecond={pixelsPerSecond}
+          zoomWidthPx={zoomWidthPx}
+          snapGuideMs={snapGuideMs}
+          selection={selection}
+          collisionMode={collisionMode}
+          snapEnabled={snapEnabled}
+          snapMs={snapMs}
+          onSnapEnabledChange={setSnapEnabled}
+          onSnapMsChange={setSnapMs}
+          onCollisionModeChange={setCollisionMode}
+          getClipRenderState={getClipRenderState}
+          onClipPointerDown={onClipPointerDown}
+        />
+      )}
+      diagnostics={
+        devMode ? (
+          <DiagnosticsPanel
+            decoderLogs={decoderLogs}
+            timestampAuditSamples={timestampAuditSamples}
+            onTimestampAuditSamplesChange={setTimestampAuditSamples}
+            qaProfile={qaProfile}
+            onQaProfileChange={setQaProfile}
+            qaScenarioCount={qaScenarioCount}
+            onQaScenarioCountChange={setQaScenarioCount}
+            qaRunning={qaRunning}
+            canRunQa={decoderMode === "webcodecs"}
+            onRunQa={() => {
+              void runDecodeQA();
             }}
-          >
-            Reset
-          </button>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Schema Loaded</h2>
-        <pre>{JSON.stringify({ id: projectSchema.$id, title: projectSchema.title }, null, 2)}</pre>
-      </section>
-
-      <section className="panel">
-        <h2>Project JSON</h2>
-        <pre>{JSON.stringify(normalizeProject(project), null, 2)}</pre>
-      </section>
-
-      <footer className="panel log">{log}</footer>
-    </main>
+            onExportLastResult={() => {
+              exportQARunResult(lastRunResult);
+            }}
+            qaMetric={qaMetric}
+            qaHistory={qaHistory}
+            lastRunResult={lastRunResult}
+            projectSchemaSummary={{ id: projectSchema.$id, title: projectSchema.title }}
+            projectJson={normalizeProject(project)}
+          />
+        ) : undefined
+      }
+      status={log}
+    />
   );
 }

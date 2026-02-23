@@ -10,16 +10,23 @@
 
 body {
   margin: 0;
-  background: #f4f6f8;
+  background: #eef2f5;
   color: #12202f;
 }
 
-.shell {
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 16px;
+.editorShell {
+  min-height: 100vh;
+  padding: 12px;
   display: grid;
   gap: 12px;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) minmax(260px, 340px);
+  grid-template-rows: auto minmax(300px, 44vh) minmax(240px, 1fr) auto auto;
+  grid-template-areas:
+    "top top top"
+    "left center right"
+    "bottom bottom bottom"
+    "diag diag diag"
+    "status status status";
 }
 
 .panel {
@@ -29,8 +36,44 @@ body {
   padding: 12px;
 }
 
+.editorTop {
+  grid-area: top;
+}
+
+.editorLeft {
+  grid-area: left;
+}
+
+.editorCenter {
+  grid-area: center;
+}
+
+.editorRight {
+  grid-area: right;
+}
+
+.editorBottom {
+  grid-area: bottom;
+}
+
+.editorDiagnostics {
+  grid-area: diag;
+}
+
+.editorStatus {
+  grid-area: status;
+}
+
+.resizablePane {
+  resize: horizontal;
+  overflow: auto;
+  min-width: 220px;
+  max-width: 440px;
+}
+
 h1,
 h2,
+h3,
 p {
   margin: 0;
 }
@@ -39,13 +82,39 @@ h2 {
   margin-bottom: 8px;
 }
 
-.row2 {
+h3 {
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.panelHeader {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   margin-bottom: 8px;
 }
 
-.controls input[type="range"] {
+.toolbar {
+  display: grid;
+  gap: 10px;
+}
+
+.toolbarMain {
+  display: grid;
+  gap: 2px;
+}
+
+.toolbarControls {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.toolbarSlider {
+  display: grid;
+  gap: 5px;
+}
+
+.toolbarSlider input[type="range"] {
   width: 100%;
 }
 
@@ -53,7 +122,6 @@ h2 {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 8px;
 }
 
 button {
@@ -62,6 +130,11 @@ button {
   border-radius: 6px;
   padding: 6px 10px;
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 input,
@@ -83,6 +156,95 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.mediaBin {
+  display: grid;
+  gap: 10px;
+}
+
+.mediaUpload {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.assetList {
+  display: grid;
+  gap: 8px;
+}
+
+.assetCard {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-areas:
+    "thumb meta"
+    "thumb actions";
+  gap: 6px 8px;
+  border: 1px solid #d7dee7;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.assetCard.active {
+  border-color: #2d84ce;
+  background: #f0f8ff;
+}
+
+.assetThumb {
+  grid-area: thumb;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #2f4359;
+  border: 1px solid #c8d6e5;
+  background: linear-gradient(160deg, #edf4fb, #dbeafb);
+}
+
+.assetMeta {
+  grid-area: meta;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assetMeta strong {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.assetMeta span {
+  color: #546a7f;
+  font-size: 12px;
+}
+
+.assetActions {
+  grid-area: actions;
+  display: flex;
+  gap: 6px;
+}
+
+.previewCanvas {
+  width: 100%;
+  max-height: 420px;
+  border-radius: 8px;
+  border: 1px solid #dde5ee;
+  background: #111;
+}
+
+.hiddenVideo {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.timelineToggles {
+  margin-bottom: 8px;
 }
 
 .timelineScroller {
@@ -190,26 +352,21 @@ select {
   gap: 4px;
 }
 
-.previewCanvas {
-  width: 100%;
-  max-height: 420px;
-  border-radius: 8px;
-  border: 1px solid #dde5ee;
-  background: #111;
+.diagnosticsLayout {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
-.hiddenVideo {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
+.diagnosticsCard {
+  display: grid;
+  gap: 8px;
 }
 
 .hint {
   color: #4c6075;
   font-size: 13px;
-  margin-top: 6px;
+  margin-top: 2px;
 }
 
 pre {
@@ -225,4 +382,25 @@ pre {
 
 .log {
   color: #254159;
+}
+
+@media (max-width: 1100px) {
+  .editorShell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto auto auto;
+    grid-template-areas:
+      "top"
+      "left"
+      "center"
+      "right"
+      "bottom"
+      "diag"
+      "status";
+  }
+
+  .resizablePane {
+    resize: none;
+    max-width: none;
+    min-width: 0;
+  }
 }

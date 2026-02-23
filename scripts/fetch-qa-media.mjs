@@ -171,6 +171,30 @@ const generatedProfiles = [
   },
 ];
 
+const fallbackProfilesWithoutTranscode = [
+  {
+    id: "baseline_short_gop_aac_fallback",
+    filename: "bbb_h264_testvideos_360p_10s.mp4",
+    qaProfile: "baseline-short-gop",
+    notes:
+      "Fallback profile mapping when ffmpeg is unavailable: using downloaded 360p H.264 sample.",
+  },
+  {
+    id: "main_long_gop_aac_fallback",
+    filename: "chromium_bear_1280x720.mp4",
+    qaProfile: "main-long-gop",
+    notes:
+      "Fallback profile mapping when ffmpeg is unavailable: using downloaded Chromium 720p H.264 sample.",
+  },
+  {
+    id: "high_long_gop_aac_fallback",
+    filename: "bbb_vms_1080p_30s.mp4",
+    qaProfile: "high-long-gop",
+    notes:
+      "Fallback profile mapping when ffmpeg is unavailable: using downloaded 1080p H.264 sample.",
+  },
+];
+
 function hasCommand(command) {
   const probe = spawnSync(command, ["-version"], { stdio: "ignore" });
   return probe.status === 0;
@@ -262,7 +286,21 @@ async function main() {
 
   const canTranscode = hasCommand("ffmpeg");
   if (!canTranscode) {
-    console.warn("ffmpeg not found. Skipping generated Baseline/Main/High profile clips.");
+    console.warn("ffmpeg not found. Using fallback profile mapping for Baseline/Main/High clips.");
+    for (const item of fallbackProfilesWithoutTranscode) {
+      const fallbackPath = path.join(mediaDir, item.filename);
+      manifestEntries.push({
+        id: item.id,
+        filename: item.filename,
+        path: `poc/editor-web/.qa-media/${item.filename}`,
+        source: "fallback-from-downloaded-sample",
+        sourceUrl: null,
+        notes: item.notes,
+        qaProfile: item.qaProfile,
+        fragmented: false,
+        probe: probeFile(fallbackPath),
+      });
+    }
   } else {
     for (const item of generatedProfiles) {
       const inputPath = path.join(mediaDir, item.inputFilename);
