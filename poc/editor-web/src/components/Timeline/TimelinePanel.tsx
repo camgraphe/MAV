@@ -13,6 +13,9 @@ type Clip = {
 type Track = {
   id: string;
   kind: "video" | "overlay" | "audio";
+  muted: boolean;
+  locked: boolean;
+  visible: boolean;
   clips: Clip[];
 };
 
@@ -20,12 +23,6 @@ type Selection = {
   trackId: string;
   clipId: string;
 } | null;
-
-type TrackUi = {
-  mute: boolean;
-  locked: boolean;
-  visible: boolean;
-};
 
 type AssetMeta = {
   id: string;
@@ -74,6 +71,7 @@ type TimelinePanelProps = {
   onDuplicateClip: (trackId: string, clipId: string) => void;
   onAddTrack: (kind: "video" | "overlay" | "audio") => void;
   onRemoveTrack: (trackId: string) => void;
+  onToggleTrackFlag: (trackId: string, key: "muted" | "locked" | "visible") => void;
   assetMap: Map<string, AssetMeta>;
 };
 
@@ -146,11 +144,11 @@ export function TimelinePanel({
   onDuplicateClip,
   onAddTrack,
   onRemoveTrack,
+  onToggleTrackFlag,
   assetMap,
 }: TimelinePanelProps) {
   const selected = new Set(selectedClipKeys);
   const [dragOver, setDragOver] = useState(false);
-  const [trackUi, setTrackUi] = useState<Record<string, TrackUi>>({});
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -187,34 +185,10 @@ export function TimelinePanel({
   }, [tracks, getClipRenderState, pixelsPerSecond]);
 
   useEffect(() => {
-    setTrackUi((prev) => {
-      const next: Record<string, TrackUi> = {};
-      for (const track of tracks) {
-        next[track.id] = prev[track.id] ?? {
-          mute: false,
-          locked: false,
-          visible: true,
-        };
-      }
-      return next;
-    });
-  }, [tracks]);
-
-  useEffect(() => {
     const close = () => setContextMenu(null);
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, []);
-
-  const toggleTrackFlag = (trackId: string, key: keyof TrackUi) => {
-    setTrackUi((prev) => ({
-      ...prev,
-      [trackId]: {
-        ...(prev[trackId] ?? { mute: false, locked: false, visible: true }),
-        [key]: !(prev[trackId]?.[key] ?? false),
-      },
-    }));
-  };
 
   const setZoom = (next: number) => {
     onZoomChange(Math.max(20, Math.min(240, Math.round(next))));
@@ -407,36 +381,31 @@ export function TimelinePanel({
         <div className="timelineWorkspace" style={{ minWidth: `${TRACK_LABEL_WIDTH + zoomWidthPx}px` }}>
           <div className="trackColumn" style={{ width: `${TRACK_LABEL_WIDTH}px`, height: `${timelineHeight}px` }}>
             {tracks.map((track, rowIndex) => {
-              const currentTrackUi = trackUi[track.id] ?? {
-                mute: false,
-                locked: false,
-                visible: true,
-              };
               return (
                 <div key={`header-${track.id}`} className="trackHeaderRow" style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}>
                   <strong>{trackDisplayName(track, tracks)}</strong>
                   <div className="trackHeaderActions">
                     <button
                       type="button"
-                      className={`iconBtn tiny ${currentTrackUi.mute ? "activeTrackBtn" : ""}`}
+                      className={`iconBtn tiny ${track.muted ? "activeTrackBtn" : ""}`}
                       title="Mute track"
-                      onClick={() => toggleTrackFlag(track.id, "mute")}
+                      onClick={() => onToggleTrackFlag(track.id, "muted")}
                     >
                       M
                     </button>
                     <button
                       type="button"
-                      className={`iconBtn tiny ${currentTrackUi.locked ? "activeTrackBtn" : ""}`}
+                      className={`iconBtn tiny ${track.locked ? "activeTrackBtn" : ""}`}
                       title="Lock track"
-                      onClick={() => toggleTrackFlag(track.id, "locked")}
+                      onClick={() => onToggleTrackFlag(track.id, "locked")}
                     >
                       L
                     </button>
                     <button
                       type="button"
-                      className={`iconBtn tiny ${currentTrackUi.visible ? "activeTrackBtn" : ""}`}
+                      className={`iconBtn tiny ${track.visible ? "activeTrackBtn" : ""}`}
                       title="Toggle visibility"
-                      onClick={() => toggleTrackFlag(track.id, "visible")}
+                      onClick={() => onToggleTrackFlag(track.id, "visible")}
                     >
                       V
                     </button>
@@ -544,12 +513,6 @@ export function TimelinePanel({
             {dragOver ? <div className="timelineDropState">Drop to add clip at this position</div> : null}
 
             {tracks.map((track, rowIndex) => {
-              const currentTrackUi = trackUi[track.id] ?? {
-                mute: false,
-                locked: false,
-                visible: true,
-              };
-
               return (
                 <div key={track.id} className="trackLane" style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}>
                   {track.clips.map((sourceClip) => {
@@ -571,9 +534,9 @@ export function TimelinePanel({
                         style={{
                           left: `${(clip.startMs / 1000) * pixelsPerSecond}px`,
                           width: `${widthPx}px`,
-                          opacity: currentTrackUi.visible ? 1 : 0.25,
+                          opacity: track.visible ? 1 : 0.25,
                         }}
-                        disabled={currentTrackUi.locked}
+                        disabled={track.locked}
                         onPointerDown={(event) => {
                           event.stopPropagation();
                           onClipPointerDown(event, track.id, sourceClip);

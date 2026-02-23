@@ -39,6 +39,9 @@ type Clip = {
 type Track = {
   id: string;
   kind: TrackKind;
+  muted: boolean;
+  locked: boolean;
+  visible: boolean;
   clips: Clip[];
 };
 
@@ -332,16 +335,25 @@ function createInitialProject(): ProjectState {
         {
           id: "video-1",
           kind: "video",
+          muted: false,
+          locked: false,
+          visible: true,
           clips: [],
         },
         {
           id: "overlay-1",
           kind: "overlay",
+          muted: false,
+          locked: false,
+          visible: true,
           clips: [],
         },
         {
           id: "audio-1",
           kind: "audio",
+          muted: false,
+          locked: false,
+          visible: true,
           clips: [],
         },
       ],
@@ -353,6 +365,9 @@ function normalizeProject(project: ProjectState): ProjectState {
   const tracks = [...project.timeline.tracks]
     .map((track) => ({
       ...track,
+      muted: Boolean((track as { muted?: unknown }).muted),
+      locked: Boolean((track as { locked?: unknown }).locked),
+      visible: (track as { visible?: unknown }).visible !== false,
       clips: [...track.clips]
         .sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id))
         .map((clip) => ({
@@ -395,7 +410,7 @@ function findClip(project: ProjectState, selection: Selection | null) {
 }
 
 function findProgramClipAtMs(project: ProjectState, playheadMs: number): ProgramClipContext | null {
-  const videoTracks = project.timeline.tracks.filter((track) => track.kind === "video");
+  const videoTracks = project.timeline.tracks.filter((track) => track.kind === "video" && track.visible);
   for (const track of videoTracks) {
     for (const clip of track.clips) {
       const clipStartMs = clip.startMs;
@@ -429,6 +444,10 @@ function collectSnapTargets(project: ProjectState, excludeClipId: string, playhe
     }
   }
   return edges;
+}
+
+function isTrackLocked(project: ProjectState, trackId: string): boolean {
+  return Boolean(project.timeline.tracks.find((track) => track.id === trackId)?.locked);
 }
 
 function nearestSnap(valueMs: number, targets: number[], thresholdMs: number) {
@@ -733,6 +752,10 @@ export default function App() {
     if (!pos) return null;
     return project.timeline.tracks[pos.trackIndex].clips[pos.clipIndex];
   }, [project, selection]);
+  const selectedTrack = useMemo(() => {
+    if (!selection) return null;
+    return project.timeline.tracks.find((track) => track.id === selection.trackId) ?? null;
+  }, [project.timeline.tracks, selection]);
 
   const programClipContext = useMemo(
     () => findProgramClipAtMs(project, playheadMs),
@@ -740,6 +763,11 @@ export default function App() {
   );
   const programVideoUrl = programClipContext?.assetUrl ?? null;
   const programAssetId = programClipContext?.assetId ?? null;
+  const programTrackMuted = useMemo(() => {
+    if (!programClipContext) return false;
+    const track = project.timeline.tracks.find((item) => item.id === programClipContext.trackId);
+    return Boolean(track?.muted);
+  }, [programClipContext, project.timeline.tracks]);
   const programLocalPlayheadUs = useMemo(
     () => (programClipContext ? toUs(programClipContext.localMs) : playheadUs),
     [playheadUs, programClipContext],
@@ -1039,7 +1067,9 @@ export default function App() {
     if (!drag) return;
     if (event.pointerId !== drag.pointerId) return;
 
-    if (interactionPreview) {
+    if (interactionPreview && isTrackLocked(project, interactionPreview.trackId)) {
+      setLog("Track is locked.");
+    } else if (interactionPreview) {
       setProjectWithNormalize((prev) => {
         const pos = findClip(prev, {
           trackId: interactionPreview.trackId,
@@ -1049,6 +1079,7 @@ export default function App() {
 
         const tracks = [...prev.timeline.tracks];
         const track = { ...tracks[pos.trackIndex] };
+        if (track.locked) return prev;
         const clip = track.clips[pos.clipIndex];
         const constrainedTrack = applyCollisionPolicy(
           track,
@@ -1081,6 +1112,10 @@ export default function App() {
     clip: Clip,
   ) => {
     if (event.button !== 0) return;
+    if (isTrackLocked(project, trackId)) {
+      setLog("Track is locked.");
+      return;
+    }
 
     if (timelineTool === "split") {
       const rect = event.currentTarget.getBoundingClientRect();
@@ -1157,11 +1192,16 @@ export default function App() {
 
   const updateSelectedClip = (updater: (clip: Clip) => Clip) => {
     if (!selection) return;
+    if (selectedTrack?.locked) {
+      setLog("Selected track is locked.");
+      return;
+    }
     setProjectWithNormalize((prev) => {
       const pos = findClip(prev, selection);
       if (!pos) return prev;
       const tracks = [...prev.timeline.tracks];
       const track = { ...tracks[pos.trackIndex] };
+      if (track.locked) return prev;
       const clip = track.clips[pos.clipIndex];
       const updated = updater(clip);
       tracks[pos.trackIndex] = applyCollisionPolicy(track, clip.id, updated, collisionMode);
@@ -1171,8 +1211,17 @@ export default function App() {
 
   const nudgeSelected = (deltaMs: number) => {
     if (selectedClipSet.size === 0) return;
+    const hasLockedSelection = project.timeline.tracks.some(
+      (track) =>
+        track.locked &&
+        track.clips.some((clip) => selectedClipSet.has(clipKey(track.id, clip.id))),
+    );
+    if (hasLockedSelection) {
+      setLog("Locked tracks were skipped.");
+    }
     setProjectWithNormalize((prev) => {
       const tracks = prev.timeline.tracks.map((track) => {
+        if (track.locked) return track;
         let changed = false;
         const clips = track.clips.map((clip) => {
           if (!selectedClipSet.has(clipKey(track.id, clip.id))) return clip;
@@ -1227,15 +1276,30 @@ export default function App() {
 
   const removeSelected = () => {
     if (selectedClipSet.size === 0) return;
+    const removableKeys = new Set<string>();
+    for (const track of project.timeline.tracks) {
+      if (track.locked) continue;
+      for (const clip of track.clips) {
+        const key = clipKey(track.id, clip.id);
+        if (selectedClipSet.has(key)) {
+          removableKeys.add(key);
+        }
+      }
+    }
+    if (removableKeys.size === 0) {
+      setLog("Selection is on locked tracks.");
+      return;
+    }
 
     setProjectWithNormalize((prev) => {
       const tracks = prev.timeline.tracks.map((track) => {
+        if (track.locked) return track;
         const removed = track.clips
-          .filter((clip) => selectedClipSet.has(clipKey(track.id, clip.id)))
+          .filter((clip) => removableKeys.has(clipKey(track.id, clip.id)))
           .sort((a, b) => a.startMs - b.startMs);
         if (removed.length === 0) return track;
 
-        const baseClips = track.clips.filter((clip) => !selectedClipSet.has(clipKey(track.id, clip.id)));
+        const baseClips = track.clips.filter((clip) => !removableKeys.has(clipKey(track.id, clip.id)));
         if (rippleMode !== "ripple-delete") {
           return { ...track, clips: sortClips(baseClips) };
         }
@@ -1254,18 +1318,32 @@ export default function App() {
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
 
-    setSelection(null);
-    setSelectedClipKeys([]);
+    setSelectedClipKeys((prev) => {
+      const next = prev.filter((key) => !removableKeys.has(key));
+      const primary = next.at(-1);
+      if (primary) {
+        const [trackId, clipId] = primary.split(":");
+        setSelection({ trackId, clipId });
+      } else {
+        setSelection(null);
+      }
+      return next;
+    });
   };
 
   const splitSelected = () => {
     if (!selection) return;
+    if (selectedTrack?.locked) {
+      setLog("Selected track is locked.");
+      return;
+    }
     setProjectWithNormalize((prev) => {
       const pos = findClip(prev, selection);
       if (!pos) return prev;
 
       const tracks = [...prev.timeline.tracks];
       const track = { ...tracks[pos.trackIndex] };
+      if (track.locked) return prev;
       const clips = [...track.clips];
       const clip = clips[pos.clipIndex];
 
@@ -1307,11 +1385,16 @@ export default function App() {
   };
 
   const splitClipAt = (trackId: string, clipId: string, targetMs: number) => {
+    if (isTrackLocked(project, trackId)) {
+      setLog("Track is locked.");
+      return;
+    }
     setProjectWithNormalize((prev) => {
       const pos = findClip(prev, { trackId, clipId });
       if (!pos) return prev;
       const tracks = [...prev.timeline.tracks];
       const track = { ...tracks[pos.trackIndex] };
+      if (track.locked) return prev;
       const clips = [...track.clips];
       const clip = clips[pos.clipIndex];
 
@@ -1351,9 +1434,15 @@ export default function App() {
   };
 
   const deleteClipById = (trackId: string, clipId: string) => {
+    if (isTrackLocked(project, trackId)) {
+      setLog("Track is locked.");
+      return;
+    }
     setProjectWithNormalize((prev) => {
       const tracks = prev.timeline.tracks.map((track) =>
-        track.id === trackId ? { ...track, clips: track.clips.filter((clip) => clip.id !== clipId) } : track,
+        track.id === trackId && !track.locked
+          ? { ...track, clips: track.clips.filter((clip) => clip.id !== clipId) }
+          : track,
       );
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
@@ -1364,9 +1453,13 @@ export default function App() {
   };
 
   const duplicateClip = (trackId: string, clipId: string) => {
+    if (isTrackLocked(project, trackId)) {
+      setLog("Track is locked.");
+      return;
+    }
     setProjectWithNormalize((prev) => {
       const track = prev.timeline.tracks.find((item) => item.id === trackId);
-      if (!track) return prev;
+      if (!track || track.locked) return prev;
       const source = track.clips.find((clip) => clip.id === clipId);
       if (!source) return prev;
 
@@ -1397,10 +1490,21 @@ export default function App() {
         index += 1;
         nextId = `${prefix}-${index}`;
       }
-      const tracks = [...prev.timeline.tracks, { id: nextId, kind, clips: [] }];
+      const tracks = [...prev.timeline.tracks, { id: nextId, kind, muted: false, locked: false, visible: true, clips: [] }];
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
     setLog(`Track added: ${kind}.`);
+  };
+
+  const toggleTrackFlag = (trackId: string, key: "muted" | "locked" | "visible") => {
+    setProjectWithNormalize((prev) => {
+      const track = prev.timeline.tracks.find((item) => item.id === trackId);
+      if (!track) return prev;
+      const tracks = prev.timeline.tracks.map((item) =>
+        item.id === trackId ? { ...item, [key]: !item[key] } : item,
+      );
+      return { ...prev, timeline: { ...prev.timeline, tracks } };
+    });
   };
 
   const removeTrack = (trackId: string) => {
@@ -1428,9 +1532,14 @@ export default function App() {
   };
 
   const addOverlayClip = () => {
+    const unlockedOverlay = project.timeline.tracks.find((track) => track.kind === "overlay" && !track.locked);
+    if (!unlockedOverlay) {
+      setLog("No unlocked overlay track available.");
+      return;
+    }
     setProjectWithNormalize((prev) => {
       const tracks = prev.timeline.tracks.map((track) => {
-        if (track.kind !== "overlay") return track;
+        if (track.kind !== "overlay" || track.locked) return track;
         const id = `overlay-${crypto.randomUUID().slice(0, 8)}`;
         const next: Clip = {
           id,
@@ -2890,6 +2999,10 @@ export default function App() {
       setLog("Asset not found.");
       return;
     }
+    if (preferredTrackId && isTrackLocked(project, preferredTrackId)) {
+      setLog("Track is locked.");
+      return;
+    }
 
     setProjectWithNormalize((prev) => {
       const tracks = [...prev.timeline.tracks];
@@ -2898,11 +3011,20 @@ export default function App() {
       if (videoTrackIndex >= 0 && tracks[videoTrackIndex].kind !== "video") {
         videoTrackIndex = -1;
       }
-      if (videoTrackIndex === -1) {
-        videoTrackIndex = tracks.findIndex((track) => track.kind === "video");
+      if (videoTrackIndex >= 0 && tracks[videoTrackIndex].locked) {
+        return prev;
       }
       if (videoTrackIndex === -1) {
-        tracks.push({ id: "video-1", kind: "video", clips: [] });
+        videoTrackIndex = tracks.findIndex((track) => track.kind === "video" && !track.locked);
+      }
+      if (videoTrackIndex === -1) {
+        let nextVideoIndex = 1;
+        let nextVideoId = `video-${nextVideoIndex}`;
+        while (tracks.some((track) => track.id === nextVideoId)) {
+          nextVideoIndex += 1;
+          nextVideoId = `video-${nextVideoIndex}`;
+        }
+        tracks.push({ id: nextVideoId, kind: "video", muted: false, locked: false, visible: true, clips: [] });
         videoTrackIndex = tracks.length - 1;
       }
 
@@ -3060,6 +3182,7 @@ export default function App() {
             sourceVideoRef={sourceVideoRef}
             programVideoUrl={programVideoUrl}
             sourceVideoUrl={sourceVideoUrl}
+            programMuted={programTrackMuted}
             onProgramLoadedMetadata={onProgramMetadataLoaded}
             onSourceLoadedMetadata={onSourceMetadataLoaded}
             playheadMs={playheadMs}
@@ -3147,6 +3270,7 @@ export default function App() {
             onDuplicateClip={duplicateClip}
             onAddTrack={addTrack}
             onRemoveTrack={removeTrack}
+            onToggleTrackFlag={toggleTrackFlag}
             assetMap={timelineAssetMap}
           />
         )}
