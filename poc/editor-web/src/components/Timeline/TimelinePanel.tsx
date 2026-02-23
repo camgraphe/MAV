@@ -103,7 +103,9 @@ export function TimelinePanel({
   onAssetDrop,
 }: TimelinePanelProps) {
   const selected = new Set(selectedClipKeys);
+  const [dragOver, setDragOver] = useState(false);
   const [trackUi, setTrackUi] = useState<Record<string, TrackUi>>({});
+  const hasAnyClip = tracks.some((track) => track.clips.length > 0);
 
   useEffect(() => {
     setTrackUi((prev) => {
@@ -237,7 +239,7 @@ export function TimelinePanel({
 
       <div className="timelineScroller">
         <div
-          className={`timelineCanvas ${showFilmstrip ? "filmstripOn" : "filmstripOff"}`}
+          className={`timelineCanvas ${showFilmstrip ? "filmstripOn" : "filmstripOff"} ${dragOver ? "dropActive" : ""}`}
           style={{ width: `${zoomWidthPx}px` }}
           onPointerDown={(event) => {
             if (event.button !== 0) return;
@@ -249,9 +251,13 @@ export function TimelinePanel({
           onDragOver={(event) => {
             event.preventDefault();
             event.dataTransfer.dropEffect = "copy";
+            setDragOver(true);
           }}
+          onDragEnter={() => setDragOver(true)}
+          onDragLeave={() => setDragOver(false)}
           onDrop={(event) => {
             event.preventDefault();
+            setDragOver(false);
             const assetId =
               event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
             if (!assetId) return;
@@ -269,6 +275,12 @@ export function TimelinePanel({
           {snapGuideMs != null ? (
             <div className="snapGuide" style={{ left: `${(snapGuideMs / 1000) * pixelsPerSecond}px` }} />
           ) : null}
+          {!hasAnyClip ? (
+            <div className="timelineEmptyState">
+              Drag media from the Media tab to create your first clip.
+            </div>
+          ) : null}
+          {dragOver ? <div className="timelineDropState">Drop to add clip at this position</div> : null}
 
           {tracks.map((track, rowIndex) => {
             const currentTrackUi = trackUi[track.id] ?? {

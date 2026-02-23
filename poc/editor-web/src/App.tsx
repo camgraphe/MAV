@@ -223,6 +223,12 @@ type AnalysisWorkerOutMessage = {
   codecGuess: string | null;
 };
 
+type AssetAnalysisCacheValue = {
+  waveform: number[];
+  thumbnails: string[];
+  codecGuess: string | null;
+};
+
 declare global {
   interface Window {
     __MAV_DECODE_QA__?: DecodeQaApi;
@@ -230,10 +236,12 @@ declare global {
 }
 
 const STORAGE_KEY = "mav.poc.editor.state.v2";
+const ANALYSIS_CACHE_KEY = "mav.poc.editor.analysis-cache.v1";
 const MIN_CLIP_DURATION_MS = 100;
 const DEFAULT_QA_SCENARIOS = 50;
 const HISTORY_LIMIT = 80;
 const PLAYBACK_TICK_LIMIT_MS = 50;
+const ANALYSIS_CACHE_LIMIT = 24;
 
 function toUs(ms: number): number {
   return Math.round(ms * 1000);
@@ -257,6 +265,10 @@ function isTypingTarget(target: EventTarget | null): boolean {
   const tag = target.tagName.toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select" || tag === "button") return true;
   return target.isContentEditable;
+}
+
+function assetAnalysisCacheKey(file: File): string {
+  return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
 function createInitialProject(): ProjectState {
@@ -582,6 +594,8 @@ export default function App() {
   const historyRef = useRef<{ undo: ProjectState[]; redo: ProjectState[] }>({ undo: [], redo: [] });
   const analysisWorkerRef = useRef<Worker | null>(null);
   const assetThumbBusyRef = useRef<Set<string>>(new Set());
+  const analysisCacheRef = useRef<Map<string, AssetAnalysisCacheValue>>(new Map());
+  const assetAnalysisKeyRef = useRef<Map<string, string>>(new Map());
   const exportPollTimerRef = useRef<number | null>(null);
 
   const decodeWorkerRef = useRef<Worker | null>(null);
@@ -658,6 +672,59 @@ export default function App() {
         projectId: nextName,
       },
     }), { recordHistory: false });
+  };
+
+  const persistAnalysisCache = () => {
+    const entries = [...analysisCacheRef.current.entries()];
+    const trimmed = entries.slice(Math.max(0, entries.length - ANALYSIS_CACHE_LIMIT));
+    try {
+      localStorage.setItem(ANALYSIS_CACHE_KEY, JSON.stringify(trimmed));
+    } catch {
+      // Ignore storage write errors; cache remains in memory.
+    }
+  };
+
+  const applyAnalysisToAsset = (assetId: string, analysis: AssetAnalysisCacheValue) => {
+    setProject((prev) => ({
+      ...prev,
+      assets: prev.assets.map((asset) =>
+        asset.id === assetId
+          ? {
+              ...asset,
+              waveform: analysis.waveform,
+              thumbnails: analysis.thumbnails,
+              codec: asset.codec ?? analysis.codecGuess ?? undefined,
+            }
+          : asset,
+      ),
+    }));
+  };
+
+  const requestAssetAnalysis = (assetId: string, file: File, durationMs: number) => {
+    const cacheKey = assetAnalysisCacheKey(file);
+    assetAnalysisKeyRef.current.set(assetId, cacheKey);
+    const cached = analysisCacheRef.current.get(cacheKey);
+    if (cached) {
+      applyAnalysisToAsset(assetId, cached);
+      return;
+    }
+
+    const worker = analysisWorkerRef.current;
+    if (!worker || assetThumbBusyRef.current.has(assetId)) return;
+    assetThumbBusyRef.current.add(assetId);
+
+    void file.arrayBuffer().then((buffer) => {
+      worker.postMessage(
+        {
+          type: "analyze",
+          assetId,
+          buffer,
+          durationMs,
+          thumbnailsPerSecond: 2,
+        } satisfies AnalysisWorkerInMessage,
+        [buffer],
+      );
+    });
   };
 
   const getClipRenderState = (trackId: string, clip: Clip): Clip => {
@@ -1654,6 +1721,18 @@ export default function App() {
   };
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(ANALYSIS_CACHE_KEY);
+      if (!raw) return;
+      const entries = JSON.parse(raw) as Array<[string, AssetAnalysisCacheValue]>;
+      if (!Array.isArray(entries)) return;
+      analysisCacheRef.current = new Map(entries.slice(-ANALYSIS_CACHE_LIMIT));
+    } catch {
+      analysisCacheRef.current = new Map();
+    }
+  }, []);
+
+  useEffect(() => {
     const worker = new Worker(new URL("./preview/media-analysis.worker.ts", import.meta.url), {
       type: "module",
     });
@@ -1663,19 +1742,23 @@ export default function App() {
       const message = event.data;
       if (message.type !== "analysis") return;
       assetThumbBusyRef.current.delete(message.assetId);
-      setProject((prev) => ({
-        ...prev,
-        assets: prev.assets.map((asset) =>
-          asset.id === message.assetId
-            ? {
-                ...asset,
-                waveform: message.waveform,
-                thumbnails: message.thumbnails,
-                codec: asset.codec ?? message.codecGuess ?? undefined,
-              }
-            : asset,
-        ),
-      }));
+      const analysis: AssetAnalysisCacheValue = {
+        waveform: message.waveform,
+        thumbnails: message.thumbnails,
+        codecGuess: message.codecGuess,
+      };
+      const cacheKey = assetAnalysisKeyRef.current.get(message.assetId);
+      if (cacheKey) {
+        analysisCacheRef.current.set(cacheKey, analysis);
+        if (analysisCacheRef.current.size > ANALYSIS_CACHE_LIMIT) {
+          const oldest = analysisCacheRef.current.keys().next().value;
+          if (typeof oldest === "string") {
+            analysisCacheRef.current.delete(oldest);
+          }
+        }
+        persistAnalysisCache();
+      }
+      applyAnalysisToAsset(message.assetId, analysis);
     };
 
     return () => {
@@ -2092,20 +2175,7 @@ export default function App() {
       ],
     }));
 
-    if (analysisWorkerRef.current && !assetThumbBusyRef.current.has(assetId)) {
-      assetThumbBusyRef.current.add(assetId);
-      const buffer = await file.arrayBuffer();
-      analysisWorkerRef.current.postMessage(
-        {
-          type: "analyze",
-          assetId,
-          buffer,
-          durationMs: 0,
-          thumbnailsPerSecond: 1,
-        } satisfies AnalysisWorkerInMessage,
-        [buffer],
-      );
-    }
+    requestAssetAnalysis(assetId, file, 0);
 
     await loadAssetForPreview(assetId, file, url);
     setLog(`Loaded media asset: ${file.name}`);
@@ -2198,20 +2268,8 @@ export default function App() {
     }), { recordHistory: false });
 
     const file = assetFilesRef.current.get(previewAssetId);
-    if (!file || !analysisWorkerRef.current || assetThumbBusyRef.current.has(previewAssetId)) return;
-    assetThumbBusyRef.current.add(previewAssetId);
-    void file.arrayBuffer().then((buffer) => {
-      analysisWorkerRef.current?.postMessage(
-        {
-          type: "analyze",
-          assetId: previewAssetId,
-          buffer,
-          durationMs,
-          thumbnailsPerSecond: 2,
-        } satisfies AnalysisWorkerInMessage,
-        [buffer],
-      );
-    });
+    if (!file) return;
+    requestAssetAnalysis(previewAssetId, file, durationMs);
   };
 
   const zoomWidthPx = Math.max(

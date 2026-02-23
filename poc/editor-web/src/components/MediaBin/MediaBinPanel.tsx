@@ -62,7 +62,12 @@ export function MediaBinPanel({
       </label>
 
       <div className="assetList">
-        {videoAssets.length === 0 ? <p className="hint">Upload a video to start, then drag it to the timeline.</p> : null}
+        {videoAssets.length === 0 ? (
+          <div className="assetEmptyState">
+            <p className="hint">Upload a video to start, then drag it to the timeline.</p>
+            <p className="hint">Tip: click Add for quick insertion on the main track.</p>
+          </div>
+        ) : null}
 
         {videoAssets.map((asset) => {
           const active = asset.id === activeAssetId;
@@ -84,6 +89,7 @@ export function MediaBinPanel({
                 <span>{formatDuration(asset.durationMs)}</span>
                 <span>{asset.codec ?? "unknown codec"}</span>
                 <span>{formatResolution(asset.width, asset.height)}</span>
+                <span className="assetHint">Drag to timeline</span>
               </div>
               <div className="assetActions">
                 <button type="button" onClick={() => onActivateAsset(asset.id)}>
