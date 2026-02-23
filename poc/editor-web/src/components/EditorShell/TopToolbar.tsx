@@ -1,6 +1,7 @@
 type TopToolbarProps = {
   projectName: string;
   onProjectNameChange: (value: string) => void;
+  onOpenProjectSettings: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onExport: () => void;
@@ -15,6 +16,7 @@ type TopToolbarProps = {
 export function TopToolbar({
   projectName,
   onProjectNameChange,
+  onOpenProjectSettings,
   onUndo,
   onRedo,
   onExport,
@@ -42,6 +44,15 @@ export function TopToolbar({
         </button>
         <button type="button" className="iconBtn" title="Load project" aria-label="Load project" onClick={onLoad}>
           📂
+        </button>
+        <button
+          type="button"
+          className="iconBtn"
+          title="Project settings"
+          aria-label="Project settings"
+          onClick={onOpenProjectSettings}
+        >
+          ⚙
         </button>
       </div>
 

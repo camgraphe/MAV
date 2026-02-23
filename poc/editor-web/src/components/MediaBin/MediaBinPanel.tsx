@@ -1,3 +1,5 @@
+import { useRef, useState } from "react";
+
 type MediaAsset = {
   id: string;
   kind: "video" | "audio" | "image";
@@ -7,6 +9,7 @@ type MediaAsset = {
   codec?: string;
   width?: number;
   height?: number;
+  heroThumbnail?: string;
   hasAudio?: boolean;
   thumbnails?: string[];
   waveform?: number[];
@@ -36,6 +39,16 @@ function formatResolution(width?: number, height?: number) {
   return `${width}x${height}`;
 }
 
+function compactName(value?: string, fallback?: string) {
+  const source = value ?? fallback ?? "Untitled";
+  if (source.length <= 28) return source;
+  return `${source.slice(0, 25)}...`;
+}
+
+function isSyntheticThumbnail(value: string): boolean {
+  return value.startsWith("data:image/svg+xml");
+}
+
 export function MediaBinPanel({
   assets,
   activeAssetId,
@@ -44,34 +57,69 @@ export function MediaBinPanel({
   onAddToTimeline,
   onAssetDragStart,
 }: MediaBinPanelProps) {
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const videoAssets = assets.filter((asset) => asset.kind === "video");
+
+  const openPicker = () => inputRef.current?.click();
 
   return (
     <div className="mediaBin">
       <div className="panelHeader">
         <h2>Media</h2>
+        <div className="mediaBinHeaderActions">
+          <button
+            type="button"
+            className="iconBtn mediaImportBtn"
+            title="Import media"
+            onClick={openPicker}
+          >
+            +
+          </button>
+          <div className="mediaViewToggle" role="tablist" aria-label="Media view mode">
+            <button
+              type="button"
+              className={viewMode === "grid" ? "active" : ""}
+              onClick={() => setViewMode("grid")}
+              title="Grid view"
+            >
+              ▦
+            </button>
+            <button
+              type="button"
+              className={viewMode === "list" ? "active" : ""}
+              onClick={() => setViewMode("list")}
+              title="List view"
+            >
+              ≡
+            </button>
+          </div>
+        </div>
       </div>
 
-      <label className="mediaUpload" htmlFor="decode-input-file">
-        Upload MP4 / video
-        <input
-          id="decode-input-file"
-          type="file"
-          accept="video/mp4,video/*"
-          onChange={(event) => onUpload(event.target.files?.[0] ?? null)}
-        />
-      </label>
+      <input
+        ref={inputRef}
+        id="decode-input-file"
+        className="mediaUploadInput"
+        type="file"
+        accept="video/mp4,video/*"
+        onChange={(event) => onUpload(event.target.files?.[0] ?? null)}
+      />
 
-      <div className="assetList">
+      <div className={`assetList ${viewMode === "grid" ? "gridMode" : "listMode"}`}>
         {videoAssets.length === 0 ? (
           <div className="assetEmptyState">
-            <p className="hint">Upload a video to start, then drag it to the timeline.</p>
-            <p className="hint">Tip: click Add for quick insertion on the main track.</p>
+            <p className="hint">Use + to import media, then drag clips to the timeline.</p>
           </div>
         ) : null}
 
         {videoAssets.map((asset) => {
           const active = asset.id === activeAssetId;
+          const realThumbnails = (asset.thumbnails ?? []).filter((thumb) => !isSyntheticThumbnail(thumb));
+          const heroThumbIndex = realThumbnails.length > 1 ? 1 : 0;
+          const previewThumb = asset.heroThumbnail ?? realThumbnails[heroThumbIndex] ?? null;
+          const thumbStrip = realThumbnails.filter((_, index) => index !== heroThumbIndex).slice(0, 10);
+
           return (
             <article
               key={asset.id}
@@ -84,39 +132,94 @@ export function MediaBinPanel({
                 onAssetDragStart?.(asset.id);
               }}
             >
-              <div className="assetThumb">MP4</div>
-              <div className="assetMeta">
-                <strong title={asset.name}>{asset.name ?? asset.id}</strong>
-                <span>{formatDuration(asset.durationMs)}</span>
-                <span>{asset.codec ?? "unknown codec"}</span>
-                <span>{formatResolution(asset.width, asset.height)}</span>
-                <span className="assetHint">Drag to timeline</span>
-              </div>
-              <div className="assetActions">
-                <button type="button" className="iconBtn" title="Open in player" onClick={() => onActivateAsset(asset.id)}>
-                  ▶
-                </button>
-                <button type="button" className="iconBtn" title="Add to timeline" onClick={() => onAddToTimeline(asset.id)}>
-                  +
-                </button>
-              </div>
-              {asset.thumbnails && asset.thumbnails.length > 0 ? (
-                <div className="assetStrip">
-                  {asset.thumbnails.slice(0, 6).map((thumb, index) => (
-                    <img key={`${asset.id}-${index}`} src={thumb} alt="" loading="lazy" />
-                  ))}
-                </div>
-              ) : null}
-              {asset.waveform && asset.waveform.length > 0 ? (
+              {viewMode === "grid" ? (
+                <>
+                  <div className="assetPreview">
+                    {previewThumb ? (
+                      <img src={previewThumb} alt="" loading="lazy" />
+                    ) : (
+                      <video className="assetPreviewVideoThumb" src={asset.url} muted playsInline preload="metadata" />
+                    )}
+                    <div className="assetPreviewMeta">
+                      <span>{formatDuration(asset.durationMs)}</span>
+                      <span>{formatResolution(asset.width, asset.height)}</span>
+                    </div>
+                    <div className="assetActions">
+                      <button
+                        type="button"
+                        className="iconBtn"
+                        title="Open in player"
+                        onClick={() => onActivateAsset(asset.id)}
+                      >
+                        ▶
+                      </button>
+                      <button
+                        type="button"
+                        className="iconBtn"
+                        title="Add to timeline"
+                        onClick={() => onAddToTimeline(asset.id)}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <div className="assetMeta">
+                    <strong title={asset.name}>{compactName(asset.name, asset.id)}</strong>
+                  </div>
+                  {thumbStrip.length > 1 ? (
+                    <div className="assetStrip">
+                      {thumbStrip.map((thumb, index) => (
+                        <img key={`${asset.id}-${index}`} src={thumb} alt="" loading="lazy" />
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <div className="assetThumb">
+                    {previewThumb ? (
+                      <img src={previewThumb} alt="" loading="lazy" />
+                    ) : (
+                      <video className="assetThumbVideo" src={asset.url} muted playsInline preload="metadata" />
+                    )}
+                  </div>
+                  <div className="assetMeta listMeta">
+                    <strong title={asset.name}>{compactName(asset.name, asset.id)}</strong>
+                    <span>{formatDuration(asset.durationMs)}</span>
+                    <span>{asset.codec ?? "codec --"}</span>
+                    <span>{formatResolution(asset.width, asset.height)}</span>
+                  </div>
+                  <div className="assetActions listActions">
+                    <button
+                      type="button"
+                      className="iconBtn"
+                      title="Open in player"
+                      onClick={() => onActivateAsset(asset.id)}
+                    >
+                      ▶
+                    </button>
+                    <button
+                      type="button"
+                      className="iconBtn"
+                      title="Add to timeline"
+                      onClick={() => onAddToTimeline(asset.id)}
+                    >
+                      +
+                    </button>
+                  </div>
+                </>
+              )}
+              {viewMode === "list" && asset.waveform && asset.waveform.length > 0 ? (
                 <div className="assetWaveform" aria-hidden>
                   {asset.waveform.slice(0, 48).map((value, index) => (
-                    <span key={`${asset.id}-wf-${index}`} style={{ height: `${Math.max(8, value * 28)}px` }} />
+                    <span key={`${asset.id}-wf-${index}`} style={{ height: `${Math.max(7, value * 22)}px` }} />
                   ))}
                 </div>
               ) : null}
             </article>
           );
         })}
+
       </div>
     </div>
   );

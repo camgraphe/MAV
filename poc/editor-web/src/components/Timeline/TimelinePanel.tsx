@@ -117,9 +117,9 @@ function formatRulerTime(ms: number) {
 
 const TRACK_LABEL_WIDTH = 156;
 const RULER_HEIGHT = 28;
-const LANE_HEIGHT = 60;
-const CLIP_TOP = 10;
-const CLIP_HEIGHT = 30;
+const LANE_HEIGHT = 64;
+const CLIP_TOP = 6;
+const CLIP_HEIGHT = 52;
 
 export function TimelinePanel({
   tracks,
@@ -169,6 +169,11 @@ export function TimelinePanel({
 }: TimelinePanelProps) {
   const selected = new Set(selectedClipKeys);
   const [dragOver, setDragOver] = useState(false);
+  const [dragLane, setDragLane] = useState<{
+    trackId: string;
+    compatible: boolean;
+    message: string;
+  } | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -265,10 +270,53 @@ export function TimelinePanel({
   const seekFromClientX = (clientX: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const scroller = scrollerRef.current;
     const rect = canvas.getBoundingClientRect();
-    const x = Math.min(Math.max(0, clientX - rect.left), timelineContentWidthPx);
+    const scrollLeft = scroller?.scrollLeft ?? 0;
+    const x = Math.min(Math.max(0, clientX - rect.left + scrollLeft), timelineContentWidthPx);
     const nextMs = Math.round((x / pixelsPerSecond) * 1000);
     onPlayheadChange(nextMs);
+  };
+
+  const resolveDropLane = (event: React.DragEvent<HTMLDivElement>) => {
+    const scroller = scrollerRef.current;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const scrollLeft = scroller?.scrollLeft ?? 0;
+    const scrollTop = scroller?.scrollTop ?? 0;
+    const x = Math.max(0, event.clientX - rect.left + scrollLeft);
+    const y = Math.max(0, event.clientY - rect.top + scrollTop);
+    const laneIndex = Math.min(tracks.length - 1, Math.max(0, Math.floor(y / LANE_HEIGHT)));
+    const lane = tracks[laneIndex];
+    const startMs = Math.round((x / pixelsPerSecond) * 1000);
+    return { lane, startMs };
+  };
+
+  const resolveDropCompatibility = (assetId: string, lane: Track | undefined) => {
+    if (!lane) {
+      return { compatible: false, message: "No target track." };
+    }
+    const asset = assetMap.get(assetId);
+    if (!asset) {
+      return { compatible: true, message: `Drop on ${trackDisplayName(lane, tracks)}` };
+    }
+
+    const isVideoAsset = asset.kind === "video";
+    const isOverlayAsset = asset.kind === "image";
+    const isAudioAsset = asset.kind === "audio";
+    const isVideoLane = lane.kind === "video";
+    const isOverlayLane = lane.kind === "overlay";
+    const isAudioLane = lane.kind === "audio";
+    const compatible =
+      (isVideoAsset && isVideoLane) || (isOverlayAsset && isOverlayLane) || (isAudioAsset && isAudioLane);
+    const message = compatible
+      ? `Drop on ${trackDisplayName(lane, tracks)}`
+      : isVideoAsset
+        ? "Video only on video tracks."
+        : isOverlayAsset
+          ? "Overlay only on overlay tracks."
+          : "Audio only on audio tracks.";
+
+    return { compatible, message };
   };
 
   useEffect(() => {
@@ -446,8 +494,10 @@ export function TimelinePanel({
             onPointerDown={(event) => {
               if (event.button !== 0) return;
               event.preventDefault();
+              const scroller = scrollerRef.current;
               const rect = event.currentTarget.getBoundingClientRect();
-              const localX = Math.max(0, Math.min(event.clientX - rect.left, timelineContentWidthPx));
+              const scrollLeft = scroller?.scrollLeft ?? 0;
+              const localX = Math.max(0, Math.min(event.clientX - rect.left + scrollLeft, timelineContentWidthPx));
               const nextMs = Math.round((localX / pixelsPerSecond) * 1000);
               onPlayheadChange(nextMs);
             }}
@@ -469,7 +519,9 @@ export function TimelinePanel({
               return (
                 <div
                   key={`header-${track.id}`}
-                  className={`trackHeaderRow ${firstAudioLane >= 0 && rowIndex === firstAudioLane ? "sectionStart" : ""}`}
+                  className={`trackHeaderRow ${firstAudioLane >= 0 && rowIndex === firstAudioLane ? "sectionStart" : ""} ${
+                    dragLane?.trackId === track.id ? (dragLane.compatible ? "dropTarget" : "dropRejected") : ""
+                  }`}
                   style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}
                 >
                   <strong>{trackDisplayName(track, tracks)}</strong>
@@ -517,9 +569,12 @@ export function TimelinePanel({
               if (target instanceof HTMLElement && target.closest(".clipBlock")) {
                 return;
               }
+              const scroller = scrollerRef.current;
               const rect = event.currentTarget.getBoundingClientRect();
-              const localX = Math.max(0, event.clientX - rect.left);
-              const localY = Math.max(0, event.clientY - rect.top);
+              const scrollLeft = scroller?.scrollLeft ?? 0;
+              const scrollTop = scroller?.scrollTop ?? 0;
+              const localX = Math.max(0, event.clientX - rect.left + scrollLeft);
+              const localY = Math.max(0, event.clientY - rect.top + scrollTop);
               const nextMs = Math.round((localX / pixelsPerSecond) * 1000);
               onPlayheadChange(nextMs);
               onClearSelection();
@@ -541,9 +596,12 @@ export function TimelinePanel({
             onPointerMove={(event) => {
               const active = marqueeRef.current;
               if (!active || active.pointerId !== event.pointerId) return;
+              const scroller = scrollerRef.current;
               const rect = event.currentTarget.getBoundingClientRect();
-              const x = Math.max(0, event.clientX - rect.left);
-              const y = Math.max(0, event.clientY - rect.top);
+              const scrollLeft = scroller?.scrollLeft ?? 0;
+              const scrollTop = scroller?.scrollTop ?? 0;
+              const x = Math.max(0, event.clientX - rect.left + scrollLeft);
+              const y = Math.max(0, event.clientY - rect.top + scrollTop);
               const left = Math.min(active.startX, x);
               const top = Math.min(active.startY, y);
               const width = Math.abs(x - active.startX);
@@ -563,39 +621,42 @@ export function TimelinePanel({
             }}
             onDragOver={(event) => {
               event.preventDefault();
-              event.dataTransfer.dropEffect = "copy";
+              const assetId =
+                event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
+              const { lane } = resolveDropLane(event);
+              const { compatible, message } = resolveDropCompatibility(assetId, lane);
+              event.dataTransfer.dropEffect = compatible ? "copy" : "none";
               setDragOver(true);
+              if (lane) {
+                setDragLane({
+                  trackId: lane.id,
+                  compatible,
+                  message,
+                });
+              } else {
+                setDragLane(null);
+              }
             }}
             onDragEnter={() => setDragOver(true)}
-            onDragLeave={() => setDragOver(false)}
+            onDragLeave={(event) => {
+              const nextTarget = event.relatedTarget;
+              if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+              setDragOver(false);
+              setDragLane(null);
+            }}
             onDrop={(event) => {
               event.preventDefault();
               setDragOver(false);
+              setDragLane(null);
               const assetId =
                 event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
               if (!assetId) return;
-              const rect = event.currentTarget.getBoundingClientRect();
-              const x = Math.max(0, event.clientX - rect.left);
-              const y = Math.max(0, event.clientY - rect.top);
-              const laneIndex = Math.min(tracks.length - 1, Math.max(0, Math.floor(y / LANE_HEIGHT)));
-              const lane = tracks[laneIndex];
-              const startMs = Math.round((x / pixelsPerSecond) * 1000);
+              const { lane, startMs } = resolveDropLane(event);
               if (!lane) return;
-              const asset = assetMap.get(assetId);
-              if (asset) {
-                const isVisualAsset = asset.kind === "video" || asset.kind === "image";
-                const isAudioAsset = asset.kind === "audio";
-                const isVisualLane = lane.kind !== "audio";
-                const isAudioLane = lane.kind === "audio";
-                const isCompatible = (isVisualAsset && isVisualLane) || (isAudioAsset && isAudioLane);
-                if (!isCompatible) {
-                  onDropRejected(
-                    isVisualAsset
-                      ? "Drop rejected: visual assets can only be dropped on visual tracks."
-                      : "Drop rejected: audio assets can only be dropped on audio tracks.",
-                  );
-                  return;
-                }
+              const { compatible, message } = resolveDropCompatibility(assetId, lane);
+              if (!compatible) {
+                onDropRejected(`Drop rejected: ${message}`);
+                return;
               }
               onAssetDrop(assetId, lane.id, startMs);
             }}
@@ -614,14 +675,16 @@ export function TimelinePanel({
             {snapGuideMs != null ? (
               <div className="snapGuide" style={{ left: `${(snapGuideMs / 1000) * pixelsPerSecond}px` }} />
             ) : null}
-            {!hasAnyClip ? <div className="timelineEmptyState">Drag media from the Media tab to create your first clip.</div> : null}
-            {dragOver ? <div className="timelineDropState">Drop to add clip at this position</div> : null}
+            {!hasAnyClip ? <div className="timelineEmptyState">Drag media here to start.</div> : null}
+            {dragOver ? <div className="timelineDropState">{dragLane?.message ?? "Drop to add clip."}</div> : null}
 
             {tracks.map((track, rowIndex) => {
               return (
                 <div
                   key={track.id}
-                  className={`trackLane ${firstAudioLane >= 0 && rowIndex === firstAudioLane ? "sectionStart" : ""}`}
+                  className={`trackLane ${firstAudioLane >= 0 && rowIndex === firstAudioLane ? "sectionStart" : ""} ${
+                    dragLane?.trackId === track.id ? (dragLane.compatible ? "dropTarget" : "dropRejected") : ""
+                  }`}
                   style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}
                 >
                   {track.clips.map((sourceClip) => {

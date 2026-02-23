@@ -1,11 +1,15 @@
 const THUMB_WIDTH = 160;
 const THUMB_HEIGHT = 90;
+const HERO_THUMB_WIDTH = 320;
+const HERO_THUMB_HEIGHT = 180;
 const DEFAULT_POINTS = 96;
 const SEEK_TIMEOUT_MS = 3000;
 const METADATA_TIMEOUT_MS = 5000;
+const PRIMARY_THUMB_TARGET_SECONDS = 1.5;
 
 export type RealMediaAnalysis = {
   thumbnails: string[];
+  heroThumbnail?: string;
   waveform: number[];
   codecGuess: string | null;
   durationMs?: number;
@@ -139,9 +143,17 @@ async function captureVideoThumbnails(
     const thumbnails: string[] = [];
     const timelineDuration = Math.max(0.04, video.duration);
     const maxSeekTime = Math.max(0, timelineDuration - 0.04);
+    const primarySeekTime = clamp(
+      Math.min(PRIMARY_THUMB_TARGET_SECONDS, timelineDuration * 0.35),
+      0,
+      maxSeekTime,
+    );
     for (let i = 0; i < count; i += 1) {
-      const progress = count <= 1 ? 0 : i / (count - 1);
-      const seekTime = maxSeekTime * progress;
+      let seekTime = primarySeekTime;
+      if (i > 0) {
+        const progress = count <= 1 ? 0 : i / (count - 1);
+        seekTime = maxSeekTime * progress;
+      }
       try {
         await seekVideo(video, seekTime);
       } catch {
@@ -158,6 +170,47 @@ async function captureVideoThumbnails(
       width: video.videoWidth || undefined,
       height: video.videoHeight || undefined,
     };
+  } finally {
+    cleanupProbeVideo(video, url);
+  }
+}
+
+export async function captureQuickVideoThumbnail(
+  file: File,
+  atSeconds = PRIMARY_THUMB_TARGET_SECONDS,
+  options: {
+    width?: number;
+    height?: number;
+    quality?: number;
+  } = {},
+): Promise<string | null> {
+  const url = URL.createObjectURL(file);
+  const video = createProbeVideo(url);
+  try {
+    const width = Math.max(64, Math.round(options.width ?? THUMB_WIDTH));
+    const height = Math.max(36, Math.round(options.height ?? THUMB_HEIGHT));
+    const quality = clamp(options.quality ?? 0.82, 0.3, 0.98);
+    await waitForMetadata(video);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const preferred = Math.min(atSeconds, Math.max(0.12, duration * 0.35));
+    const target = clamp(preferred, 0, Math.max(0, duration - 0.04));
+    try {
+      await seekVideo(video, target);
+    } catch {
+      await seekVideo(video, 0);
+    }
+
+    context.clearRect(0, 0, width, height);
+    context.drawImage(video, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", quality);
+  } catch {
+    return null;
   } finally {
     cleanupProbeVideo(video, url);
   }
@@ -227,7 +280,7 @@ export async function analyzeMediaFile(file: File, options: AnalyzeOptions = {})
   const waveformPoints = clamp(Math.round(options.waveformPoints ?? DEFAULT_POINTS), 24, 160);
   const requestedDurationMs = Math.max(0, Math.round(options.durationMs ?? 0));
 
-  const [thumbResult, waveResult] = await Promise.all([
+  const [thumbResult, waveResult, heroThumbnail] = await Promise.all([
     captureVideoThumbnails(file, requestedDurationMs, thumbnailsPerSecond, maxThumbnails).catch(() => ({
       thumbnails: [] as string[],
       durationMs: undefined,
@@ -235,10 +288,16 @@ export async function analyzeMediaFile(file: File, options: AnalyzeOptions = {})
       height: undefined,
     })),
     captureWaveform(file, waveformPoints).catch(() => ({ waveform: [] as number[], hasAudio: undefined })),
+    captureQuickVideoThumbnail(file, PRIMARY_THUMB_TARGET_SECONDS, {
+      width: HERO_THUMB_WIDTH,
+      height: HERO_THUMB_HEIGHT,
+      quality: 0.9,
+    }).catch(() => null),
   ]);
 
   return {
     thumbnails: thumbResult.thumbnails,
+    heroThumbnail: heroThumbnail ?? undefined,
     waveform: waveResult.waveform,
     codecGuess: guessCodecFromMimeType(file.type),
     durationMs: thumbResult.durationMs,

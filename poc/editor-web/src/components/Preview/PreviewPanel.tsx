@@ -2,10 +2,10 @@ import { useState, type RefObject } from "react";
 
 type PreviewPanelProps = {
   programCanvasRef: RefObject<HTMLCanvasElement | null>;
-  programVideoRef: RefObject<HTMLVideoElement | null>;
+  programVideoARef: RefObject<HTMLVideoElement | null>;
+  programVideoBRef: RefObject<HTMLVideoElement | null>;
   sourceCanvasRef: RefObject<HTMLCanvasElement | null>;
   sourceVideoRef: RefObject<HTMLVideoElement | null>;
-  programVideoUrl: string | null;
   sourceVideoUrl: string | null;
   programMuted: boolean;
   onProgramLoadedMetadata: (durationMs: number, width: number, height: number) => void;
@@ -32,10 +32,10 @@ type PreviewPanelProps = {
 
 export function PreviewPanel({
   programCanvasRef,
-  programVideoRef,
+  programVideoARef,
+  programVideoBRef,
   sourceCanvasRef,
   sourceVideoRef,
-  programVideoUrl,
   sourceVideoUrl,
   programMuted,
   onProgramLoadedMetadata,
@@ -156,9 +156,22 @@ export function PreviewPanel({
       </div>
 
       <video
-        ref={programVideoRef}
+        ref={programVideoARef}
         className="hiddenVideo"
-        src={programVideoUrl ?? undefined}
+        muted={programMuted}
+        playsInline
+        preload="auto"
+        onLoadedMetadata={(event) => {
+          onProgramLoadedMetadata(
+            Math.round(event.currentTarget.duration * 1000),
+            event.currentTarget.videoWidth,
+            event.currentTarget.videoHeight,
+          );
+        }}
+      />
+      <video
+        ref={programVideoBRef}
+        className="hiddenVideo"
         muted={programMuted}
         playsInline
         preload="auto"

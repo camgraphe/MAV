@@ -1,8 +1,13 @@
-type OverlayTransform = {
+type ClipFitMode = "pixel-100" | "adapt";
+type ClipRole = "video" | "audio" | "overlay";
+
+type ClipVisual = {
   x: number;
   y: number;
-  scale: number;
-  rotation: number;
+  scalePct: number;
+  rotationDeg: number;
+  opacityPct: number;
+  fitMode: ClipFitMode;
 };
 
 type Clip = {
@@ -12,22 +17,31 @@ type Clip = {
   durationMs: number;
   inMs: number;
   outMs: number;
-  transform?: OverlayTransform;
+  visual?: ClipVisual;
 };
 
 type InspectorPanelProps = {
   selectedClip: Clip | null;
+  selectedClipRole: ClipRole | null;
   selectedCount?: number;
   onUpdateTiming: (patch: Partial<Pick<Clip, "startMs" | "durationMs" | "inMs" | "outMs">>) => void;
-  onUpdateTransform: (patch: Partial<OverlayTransform>) => void;
+  onUpdateVisual: (patch: Partial<ClipVisual>) => void;
+  onResetVisual: () => void;
+  onAdaptToFrame: () => void;
 };
 
 export function InspectorPanel({
   selectedClip,
+  selectedClipRole,
   selectedCount = 0,
   onUpdateTiming,
-  onUpdateTransform,
+  onUpdateVisual,
+  onResetVisual,
+  onAdaptToFrame,
 }: InspectorPanelProps) {
+  const visual = selectedClip?.visual;
+  const isAudio = selectedClipRole === "audio";
+
   return (
     <div className="inspector">
       <div className="panelHeader">
@@ -52,6 +66,7 @@ export function InspectorPanel({
         <>
           <p className="hint">Clip: {selectedClip.label}</p>
 
+          <h3>Timing</h3>
           <div className="transformGrid">
             <label>
               Start (ms)
@@ -88,49 +103,97 @@ export function InspectorPanel({
             </label>
           </div>
 
-          {selectedClip.transform ? (
+          {isAudio ? (
+            <p className="hint">No visual properties for audio clips.</p>
+          ) : (
             <>
-              <h3>Overlay Transform</h3>
+              <h3>Transform</h3>
               <div className="transformGrid">
                 <label>
                   X
                   <input
                     type="number"
-                    value={selectedClip.transform.x}
-                    onChange={(event) => onUpdateTransform({ x: Number(event.target.value) })}
+                    value={visual?.x ?? 0}
+                    onChange={(event) => onUpdateVisual({ x: Number(event.target.value) })}
                   />
                 </label>
                 <label>
                   Y
                   <input
                     type="number"
-                    value={selectedClip.transform.y}
-                    onChange={(event) => onUpdateTransform({ y: Number(event.target.value) })}
+                    value={visual?.y ?? 0}
+                    onChange={(event) => onUpdateVisual({ y: Number(event.target.value) })}
                   />
                 </label>
                 <label>
-                  Scale
+                  Scale (%)
                   <input
                     type="number"
-                    step="0.1"
-                    min="0.1"
-                    value={selectedClip.transform.scale}
-                    onChange={(event) =>
-                      onUpdateTransform({ scale: Math.max(0.1, Number(event.target.value)) })
-                    }
+                    min={1}
+                    max={2000}
+                    value={visual?.scalePct ?? 100}
+                    onChange={(event) => onUpdateVisual({ scalePct: Number(event.target.value) })}
                   />
                 </label>
                 <label>
-                  Rotation
+                  Rotation (deg)
                   <input
                     type="number"
-                    value={selectedClip.transform.rotation}
-                    onChange={(event) => onUpdateTransform({ rotation: Number(event.target.value) })}
+                    value={visual?.rotationDeg ?? 0}
+                    onChange={(event) => onUpdateVisual({ rotationDeg: Number(event.target.value) })}
                   />
                 </label>
               </div>
+
+              <h3>Opacity</h3>
+              <div className="transformGrid">
+                <label>
+                  Opacity (%)
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={visual?.opacityPct ?? 100}
+                    onChange={(event) => onUpdateVisual({ opacityPct: Number(event.target.value) })}
+                  />
+                </label>
+                <label>
+                  Value
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={visual?.opacityPct ?? 100}
+                    onChange={(event) => onUpdateVisual({ opacityPct: Number(event.target.value) })}
+                  />
+                </label>
+              </div>
+
+              <h3>Fit</h3>
+              <div className="inspectorFitRow">
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${(visual?.fitMode ?? "pixel-100") === "pixel-100" ? "activeTool" : ""}`}
+                  onClick={() => onUpdateVisual({ fitMode: "pixel-100" })}
+                >
+                  Pixel 100
+                </button>
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${(visual?.fitMode ?? "pixel-100") === "adapt" ? "activeTool" : ""}`}
+                  onClick={() => onUpdateVisual({ fitMode: "adapt" })}
+                >
+                  Adapt
+                </button>
+                <button type="button" className="iconBtn tiny" onClick={onAdaptToFrame}>
+                  Adapt to Frame
+                </button>
+                <button type="button" className="iconBtn tiny" onClick={onResetVisual}>
+                  Reset
+                </button>
+              </div>
             </>
-          ) : null}
+          )}
         </>
       ) : null}
     </div>

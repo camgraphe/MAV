@@ -87,6 +87,17 @@
                         "rotation": { "type": "number" },
                         "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
                       }
+                    },
+                    "visual": {
+                      "type": "object",
+                      "properties": {
+                        "x": { "type": "number" },
+                        "y": { "type": "number" },
+                        "scalePct": { "type": "number", "minimum": 1 },
+                        "rotationDeg": { "type": "number" },
+                        "opacityPct": { "type": "number", "minimum": 0, "maximum": 100 },
+                        "fitMode": { "enum": ["pixel-100", "adapt"] }
+                      }
                     }
                   }
                 }

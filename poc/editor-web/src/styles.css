@@ -286,6 +286,17 @@ select {
   gap: 10px;
 }
 
+.mediaBin .panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.mediaBin .panelHeader h2 {
+  margin: 0;
+}
+
 .libraryPanel {
   display: grid;
   gap: 10px;
@@ -357,58 +368,225 @@ select {
   color: #ffb4b4;
 }
 
-.mediaUpload {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
+.mediaBinHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mediaUploadInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mediaImportBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
+
+.mediaViewToggle {
+  display: flex;
+  gap: 4px;
+  border: 1px solid #2a4158;
+  border-radius: 8px;
+  padding: 2px;
+  background: #132235;
+}
+
+.mediaViewToggle button {
+  border: 0;
+  background: transparent;
+  color: #8ea9c8;
+  border-radius: 6px;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+}
+
+.mediaViewToggle button.active {
+  background: #24405d;
+  color: #dcecff;
 }
 
 .assetList {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+}
+
+.assetList.gridMode {
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  align-content: start;
+}
+
+.assetList.listMode {
+  grid-template-columns: 1fr;
 }
 
 .assetEmptyState {
   border: 1px dashed #3d5471;
-  border-radius: 8px;
-  padding: 10px;
+  border-radius: 10px;
+  padding: 14px;
   background: #152236;
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
+.assetImportTile {
+  border: 1px solid #2f4963;
+  background: rgba(19, 35, 54, 0.62);
+  color: #bdd8f8;
+  border-radius: 10px;
+  min-height: 116px;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.assetImportTile span {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.assetImportTile small {
+  color: #9cb7d4;
+  font-size: 11px;
+}
+
+.assetImportTile.compact {
+  min-height: 104px;
+}
+
+.assetImportTile.listImport {
+  min-height: 46px;
+  grid-template-columns: auto auto;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
 }
 
 .assetCard {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
-  grid-template-areas:
-    "thumb meta"
-    "thumb actions"
-    "thumb strip"
-    "thumb wave";
-  gap: 6px 8px;
-  border: 1px solid #324961;
-  border-radius: 8px;
-  padding: 8px;
+  gap: 8px;
+  border: 0;
+  border-radius: 10px;
+  padding: 6px;
   cursor: grab;
-  background: #152236;
+  background: rgba(18, 35, 54, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(58, 84, 112, 0.22);
+}
+
+.assetList.gridMode .assetCard {
+  grid-template-rows: auto auto auto;
+}
+
+.assetList.listMode .assetCard {
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "thumb meta actions"
+    "wave wave wave";
+  align-items: center;
 }
 
 .assetCard.active {
-  border-color: #4bb4ff;
-  background: #1b2f47;
+  box-shadow:
+    inset 0 0 0 1px rgba(75, 180, 255, 0.45),
+    0 0 0 1px rgba(75, 180, 255, 0.18);
+}
+
+.assetPreview {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  background: linear-gradient(160deg, #1f334c, #15253a);
+}
+
+.assetPreview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.assetPreviewVideoThumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+
+.assetPreviewPlaceholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: #b9d2ef;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.assetPreviewMeta {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10px;
+  color: #f0f7ff;
+}
+
+.assetPreviewMeta span {
+  background: rgba(11, 19, 29, 0.68);
+  border: 0;
+  padding: 2px 5px;
+  border-radius: 6px;
 }
 
 .assetThumb {
   grid-area: thumb;
+  width: 84px;
+  height: 48px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 0;
+  background: linear-gradient(160deg, #24374f, #1b2a3d);
   display: grid;
   place-items: center;
-  border-radius: 6px;
+}
+
+.assetThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.assetThumbVideo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+
+.assetThumb span {
   font-size: 11px;
   color: #d5e8ff;
-  border: 1px solid #415a77;
-  background: linear-gradient(160deg, #24374f, #1b2a3d);
 }
 
 .assetMeta {
-  grid-area: meta;
   display: grid;
   gap: 2px;
   min-width: 0;
@@ -423,47 +601,75 @@ select {
 
 .assetMeta span {
   color: #9bb0ca;
-  font-size: 12px;
+  font-size: 11px;
 }
 
-.assetHint {
-  color: #72bfff;
-  font-weight: 500;
+.assetMeta.listMeta {
+  grid-area: meta;
+  grid-template-columns: repeat(3, auto);
+  align-items: center;
+  column-gap: 8px;
+}
+
+.assetMeta.listMeta strong {
+  grid-column: 1 / -1;
 }
 
 .assetActions {
-  grid-area: actions;
+  position: absolute;
+  top: 6px;
+  right: 6px;
   display: flex;
   gap: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.assetCard:hover .assetActions,
+.assetCard.active .assetActions {
+  opacity: 1;
+}
+
+.assetActions.listActions {
+  grid-area: actions;
+  position: static;
+  opacity: 1;
 }
 
 .assetStrip {
-  grid-area: strip;
-  display: flex;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 3px;
   overflow: hidden;
 }
 
 .assetStrip img {
-  width: 40px;
-  height: 24px;
+  width: 100%;
+  aspect-ratio: 16 / 9;
   object-fit: cover;
-  border-radius: 4px;
-  border: 1px solid #3a506b;
+  border-radius: 3px;
+  border: 0;
+  opacity: 0.9;
 }
 
 .assetWaveform {
   grid-area: wave;
-  height: 32px;
+  height: 26px;
   display: flex;
   align-items: end;
   gap: 1px;
 }
 
 .assetWaveform span {
-  width: 3px;
+  width: 2px;
   border-radius: 2px;
   background: linear-gradient(180deg, #7bb2e0, #2d84ce);
+}
+
+@media (max-width: 420px) {
+  .assetList.gridMode {
+    grid-template-columns: 1fr;
+  }
 }
 
 .previewCanvas {
@@ -793,6 +999,16 @@ select {
   border-top: 1px solid #4b698c;
 }
 
+.trackHeaderRow.dropTarget {
+  background: linear-gradient(180deg, rgba(30, 53, 78, 0.98), rgba(22, 40, 61, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(63, 147, 219, 0.42);
+}
+
+.trackHeaderRow.dropRejected {
+  background: linear-gradient(180deg, rgba(74, 31, 38, 0.95), rgba(54, 24, 30, 0.95));
+  box-shadow: inset 0 0 0 1px rgba(228, 96, 111, 0.42);
+}
+
 .trackHeaderRow strong {
   font-size: 12px;
   color: #d2e3f9;
@@ -809,8 +1025,7 @@ select {
 }
 
 .timelineCanvas.dropActive {
-  outline: 2px dashed #2d84ce;
-  outline-offset: -4px;
+  outline: none;
 }
 
 .timelineCanvas.filmstripOn {
@@ -862,17 +1077,21 @@ select {
 
 .timelineEmptyState {
   position: absolute;
-  top: 52%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: min(520px, calc(100% - 24px));
-  text-align: center;
-  color: #b5c8de;
-  font-size: 13px;
-  border: 1px dashed #4a6381;
-  border-radius: 10px;
-  padding: 12px;
-  background: rgba(24, 40, 59, 0.88);
+  top: 8px;
+  left: 10px;
+  width: fit-content;
+  max-width: min(360px, calc(100% - 24px));
+  text-align: left;
+  color: #9bb2cc;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  border: 1px solid rgba(79, 106, 138, 0.42);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(19, 33, 48, 0.55);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  z-index: 3;
 }
 
 .timelineDropState {
@@ -880,9 +1099,9 @@ select {
   top: 8px;
   right: 8px;
   font-size: 12px;
-  color: #0d5d9c;
-  background: rgba(235, 245, 255, 0.94);
-  border: 1px solid #b9d5f1;
+  color: #d8e9fb;
+  background: rgba(18, 33, 49, 0.92);
+  border: 1px solid #3d5e84;
   border-radius: 8px;
   padding: 4px 8px;
   z-index: 6;
@@ -892,12 +1111,22 @@ select {
   position: absolute;
   left: 0;
   right: 0;
-  height: 60px;
+  height: 64px;
   border-bottom: 1px solid #2b3c54;
 }
 
 .trackLane.sectionStart {
   border-top: 1px solid #3f5877;
+}
+
+.trackLane.dropTarget {
+  background: linear-gradient(180deg, rgba(26, 73, 112, 0.24), rgba(21, 57, 88, 0.18));
+  box-shadow: inset 0 0 0 1px rgba(64, 147, 219, 0.35);
+}
+
+.trackLane.dropRejected {
+  background: linear-gradient(180deg, rgba(113, 31, 42, 0.2), rgba(85, 24, 32, 0.12));
+  box-shadow: inset 0 0 0 1px rgba(220, 92, 107, 0.32);
 }
 
 .trackHeaderActions {
@@ -920,9 +1149,9 @@ select {
 
 .clipBlock {
   position: absolute;
-  top: 10px;
-  height: 30px;
-  border-radius: 8px;
+  top: 6px;
+  height: 52px;
+  border-radius: 10px;
   border: 1px solid #4e7eb0;
   background: #2b6ea8;
   font-size: 12px;
@@ -930,7 +1159,7 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 0 6px;
+  padding: 0 8px;
   user-select: none;
   touch-action: none;
   overflow: hidden;
@@ -964,7 +1193,7 @@ select {
 
 .clipHandle {
   width: 10px;
-  height: 22px;
+  height: 32px;
   border-radius: 3px;
   border: 1px solid #2f4d73;
   background: rgba(236, 245, 255, 0.8);
@@ -993,7 +1222,7 @@ select {
 
 .clipWaveform {
   position: absolute;
-  inset: 3px 6px;
+  inset: 5px 8px;
   display: flex;
   align-items: end;
   gap: 1px;
@@ -1058,6 +1287,13 @@ select {
 .transformGrid label {
   display: grid;
   gap: 4px;
+}
+
+.inspectorFitRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .inspectorEmptyState ul {
@@ -1154,6 +1390,19 @@ pre {
 .exportSettings label {
   display: grid;
   gap: 4px;
+}
+
+.projectSettingsGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.projectSettingsGrid label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #41596f;
 }
 
 .exportHistory {

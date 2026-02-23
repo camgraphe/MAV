@@ -31,6 +31,7 @@ type ExportModalProps = {
   onCancel: () => void;
   onRetry: () => void;
   onDownload: () => void;
+  previewOnlyVisualWarning?: boolean;
 };
 
 export function ExportModal({
@@ -49,6 +50,7 @@ export function ExportModal({
   onCancel,
   onRetry,
   onDownload,
+  previewOnlyVisualWarning = false,
 }: ExportModalProps) {
   if (!open) return null;
 
@@ -158,6 +160,11 @@ export function ExportModal({
         {!canStart || validationMessage ? (
           <p className="hint">
             {validationMessage ?? "You need at least one clip in the timeline to export."}
+          </p>
+        ) : null}
+        {previewOnlyVisualWarning ? (
+          <p className="hint">
+            Export currently ignores transform/opacity settings (preview-only).
           </p>
         ) : null}
 

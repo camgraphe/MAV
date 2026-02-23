@@ -82,15 +82,10 @@ function buildThumbnailDataUrl(assetId: string, index: number, atMs: number): st
 }
 
 function buildThumbnails(assetId: string, durationMs: number, thumbnailsPerSecond = 1): string[] {
-  const safeTps = clamp(Math.round(thumbnailsPerSecond), 1, 2);
-  const durationSec = Math.max(1, durationMs / 1000);
-  const count = clamp(Math.round(durationSec * safeTps), 4, 12);
-  const step = durationMs > 0 ? durationMs / count : 1000;
-  const thumbs: string[] = [];
-  for (let i = 0; i < count; i += 1) {
-    thumbs.push(buildThumbnailDataUrl(assetId, i, Math.round(i * step)));
-  }
-  return thumbs;
+  void assetId;
+  void durationMs;
+  void thumbnailsPerSecond;
+  return [];
 }
 
 self.onmessage = (event: MessageEvent<AnalyzeRequest>) => {

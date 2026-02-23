@@ -7,6 +7,7 @@ import type {
 import { EditorShell } from "./components/EditorShell/EditorShell";
 import { TopToolbar } from "./components/EditorShell/TopToolbar";
 import { AboutModal } from "./components/EditorShell/AboutModal";
+import { ProjectSettingsModal } from "./components/EditorShell/ProjectSettingsModal";
 import { TimelinePanel } from "./components/Timeline/TimelinePanel";
 import { PreviewPanel } from "./components/Preview/PreviewPanel";
 import { InspectorPanel } from "./components/Inspector/InspectorPanel";
@@ -14,7 +15,7 @@ import { MediaBinPanel } from "./components/MediaBin/MediaBinPanel";
 import { LibraryPanel } from "./components/MediaBin/LibraryPanel";
 import { DiagnosticsPanel } from "./components/Diagnostics/DiagnosticsPanel";
 import { ExportModal } from "./components/Export/ExportModal";
-import { analyzeMediaFile } from "./preview/media-analysis";
+import { analyzeMediaFile, captureQuickVideoThumbnail } from "./preview/media-analysis";
 import {
   runSilenceCutPlugin,
   type SilenceCutPluginInput,
@@ -30,6 +31,17 @@ type OverlayTransform = {
   rotation: number;
 };
 
+type ClipFitMode = "pixel-100" | "adapt";
+
+type ClipVisual = {
+  x: number;
+  y: number;
+  scalePct: number;
+  rotationDeg: number;
+  opacityPct: number;
+  fitMode: ClipFitMode;
+};
+
 type ClipMediaRole = "video" | "audio" | "overlay";
 
 type Clip = {
@@ -43,6 +55,7 @@ type Clip = {
   mediaRole?: ClipMediaRole;
   linkGroupId?: string;
   linkLocked?: boolean;
+  visual?: ClipVisual;
   transform?: OverlayTransform;
 };
 
@@ -81,6 +94,7 @@ type Asset = {
   codec?: string;
   width?: number;
   height?: number;
+  heroThumbnail?: string;
   thumbnails?: string[];
   waveform?: number[];
   hasAudio?: boolean;
@@ -119,8 +133,14 @@ type InteractionPreview = {
 type ProgramClipContext = {
   trackId: string;
   clipId: string;
+  role: ClipMediaRole;
   assetId: string;
+  assetKind: "video" | "image";
   assetUrl: string;
+  trackOrder: number;
+  visual: ClipVisual;
+  sourceWidth: number | null;
+  sourceHeight: number | null;
   clipStartMs: number;
   clipEndMs: number;
   inMs: number;
@@ -264,12 +284,14 @@ type AnalysisWorkerOutMessage = {
   type: "analysis";
   assetId: string;
   waveform: number[];
+  heroThumbnail?: string;
   thumbnails: string[];
   codecGuess: string | null;
 };
 
 type AssetAnalysisCacheValue = {
   waveform: number[];
+  heroThumbnail?: string;
   thumbnails: string[];
   codecGuess: string | null;
   durationMs?: number;
@@ -337,17 +359,18 @@ function getTrackSection(kind: TrackKind): "visual" | "audio" {
   return kind === "audio" ? "audio" : "visual";
 }
 
+function trackKindPriority(kind: TrackKind): number {
+  if (kind === "overlay") return 0;
+  if (kind === "video") return 1;
+  return 2;
+}
+
 function orderTracksStrict(tracks: Track[]): Track[] {
   return tracks
     .map((track, index) => ({ track, index }))
     .sort((a, b) => {
-      const sectionDiff =
-        getTrackSection(a.track.kind) === getTrackSection(b.track.kind)
-          ? 0
-          : getTrackSection(a.track.kind) === "visual"
-            ? -1
-            : 1;
-      if (sectionDiff !== 0) return sectionDiff;
+      const kindDiff = trackKindPriority(a.track.kind) - trackKindPriority(b.track.kind);
+      if (kindDiff !== 0) return kindDiff;
       return a.index - b.index;
     })
     .map((entry) => entry.track);
@@ -402,6 +425,47 @@ function effectiveClipRole(trackKind: TrackKind, clip: Clip): ClipMediaRole {
   return clip.mediaRole ?? toMediaRole(trackKind);
 }
 
+function defaultClipVisual(): ClipVisual {
+  return {
+    x: 0,
+    y: 0,
+    scalePct: 100,
+    rotationDeg: 0,
+    opacityPct: 100,
+    fitMode: "pixel-100",
+  };
+}
+
+function normalizeClipVisual(trackKind: TrackKind, clip: Clip): ClipVisual | undefined {
+  const role = effectiveClipRole(trackKind, clip);
+  if (role === "audio") return undefined;
+
+  const defaults = defaultClipVisual();
+  if (clip.visual) {
+    return {
+      x: Math.round(clip.visual.x),
+      y: Math.round(clip.visual.y),
+      scalePct: clamp(Math.round(clip.visual.scalePct), 1, 2000),
+      rotationDeg: Math.round(clip.visual.rotationDeg),
+      opacityPct: clamp(Math.round(clip.visual.opacityPct), 0, 100),
+      fitMode: clip.visual.fitMode === "adapt" ? "adapt" : "pixel-100",
+    };
+  }
+
+  if (clip.transform) {
+    return {
+      x: Math.round(clip.transform.x),
+      y: Math.round(clip.transform.y),
+      scalePct: clamp(Math.round(clip.transform.scale * 100), 1, 2000),
+      rotationDeg: Math.round(clip.transform.rotation),
+      opacityPct: defaults.opacityPct,
+      fitMode: defaults.fitMode,
+    };
+  }
+
+  return defaults;
+}
+
 function createInitialProject(): ProjectState {
   const now = new Date().toISOString();
   return {
@@ -419,16 +483,16 @@ function createInitialProject(): ProjectState {
       durationMs: 6000,
       tracks: [
         {
-          id: "video-1",
-          kind: "video",
+          id: "overlay-1",
+          kind: "overlay",
           muted: false,
           locked: false,
           visible: true,
           clips: [],
         },
         {
-          id: "overlay-1",
-          kind: "overlay",
+          id: "video-1",
+          kind: "video",
           muted: false,
           locked: false,
           visible: true,
@@ -467,6 +531,7 @@ function normalizeProject(project: ProjectState): ProjectState {
           mediaRole: clip.mediaRole ?? toMediaRole(track.kind),
           linkGroupId: clip.linkGroupId,
           linkLocked: clip.linkGroupId ? clip.linkLocked !== false : false,
+          visual: normalizeClipVisual(track.kind, clip),
         })),
     }))
   );
@@ -510,30 +575,103 @@ function findClip(project: ProjectState, selection: Selection | null) {
   return { trackIndex, clipIndex };
 }
 
-function findProgramClipAtMs(project: ProjectState, playheadMs: number): ProgramClipContext | null {
-  const videoTracks = project.timeline.tracks.filter((track) => track.kind === "video" && track.visible);
-  for (const track of videoTracks) {
+function resolveVisualAsset(project: ProjectState, assetId: string): (Asset & { kind: "video" | "image" }) | null {
+  return (
+    project.assets.find(
+      (entry): entry is Asset & { kind: "video" | "image" } =>
+        entry.id === assetId && (entry.kind === "video" || entry.kind === "image"),
+    ) ?? null
+  );
+}
+
+function findProgramStackAtMs(project: ProjectState, playheadMs: number): ProgramClipContext[] {
+  const visualTracks = project.timeline.tracks
+    .map((track, trackOrder) => ({ track, trackOrder }))
+    .filter(({ track }) => (track.kind === "video" || track.kind === "overlay") && track.visible);
+
+  const stack: ProgramClipContext[] = [];
+  for (const { track, trackOrder } of visualTracks) {
     for (const clip of track.clips) {
       const clipStartMs = clip.startMs;
       const clipEndMs = clip.startMs + clip.durationMs;
       if (playheadMs < clipStartMs || playheadMs >= clipEndMs) continue;
-      const asset = project.assets.find((entry) => entry.id === clip.assetId && entry.kind === "video");
+
+      const role = effectiveClipRole(track.kind, clip);
+      if (role === "audio") continue;
+      const asset = resolveVisualAsset(project, clip.assetId);
       if (!asset?.url) continue;
       const localMs = clamp(Math.round(clip.inMs + (playheadMs - clipStartMs)), clip.inMs, clip.outMs);
-      return {
+      stack.push({
         trackId: track.id,
         clipId: clip.id,
+        role,
         assetId: clip.assetId,
+        assetKind: asset.kind,
         assetUrl: asset.url,
+        trackOrder,
+        visual: clip.visual ?? defaultClipVisual(),
+        sourceWidth: asset.width ?? null,
+        sourceHeight: asset.height ?? null,
         clipStartMs,
         clipEndMs,
         inMs: clip.inMs,
         outMs: clip.outMs,
         localMs,
-      };
+      });
+      break;
     }
   }
-  return null;
+
+  return stack.sort((a, b) => {
+    const roleDiff = a.role === b.role ? 0 : a.role === "video" ? -1 : 1;
+    if (roleDiff !== 0) return roleDiff;
+    const trackDiff = a.trackOrder - b.trackOrder;
+    if (trackDiff !== 0) return trackDiff;
+    const startDiff = a.clipStartMs - b.clipStartMs;
+    if (startDiff !== 0) return startDiff;
+    return a.clipId.localeCompare(b.clipId);
+  });
+}
+
+function findProgramClipAtMs(project: ProjectState, playheadMs: number): ProgramClipContext | null {
+  const stack = findProgramStackAtMs(project, playheadMs);
+  const primaryVideo = stack.find((clip) => clip.role === "video");
+  return primaryVideo ?? stack[0] ?? null;
+}
+
+function findNextProgramClipOnTrack(project: ProjectState, current: ProgramClipContext | null): ProgramClipContext | null {
+  if (!current) return null;
+  const track = project.timeline.tracks.find((entry) => entry.id === current.trackId);
+  if (!track || !track.visible) return null;
+
+  const nextClip = [...track.clips]
+    .filter((clip) => clip.startMs >= current.clipEndMs)
+    .sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id))[0];
+  if (!nextClip) return null;
+
+  const role = effectiveClipRole(track.kind, nextClip);
+  if (role !== "video") return null;
+  const asset = resolveVisualAsset(project, nextClip.assetId);
+  if (!asset || asset.kind !== "video") return null;
+  if (!asset?.url) return null;
+  const trackOrder = project.timeline.tracks.findIndex((entry) => entry.id === track.id);
+  return {
+    trackId: track.id,
+    clipId: nextClip.id,
+    role,
+    assetId: nextClip.assetId,
+    assetKind: asset.kind,
+    assetUrl: asset.url,
+    trackOrder: trackOrder < 0 ? 0 : trackOrder,
+    visual: nextClip.visual ?? defaultClipVisual(),
+    sourceWidth: asset.width ?? null,
+    sourceHeight: asset.height ?? null,
+    clipStartMs: nextClip.startMs,
+    clipEndMs: nextClip.startMs + nextClip.durationMs,
+    inMs: nextClip.inMs,
+    outMs: nextClip.outMs,
+    localMs: nextClip.inMs,
+  };
 }
 
 function collectSnapTargets(project: ProjectState, excludeClipId: string, playheadMs: number): number[] {
@@ -570,6 +708,59 @@ function drawVideoFrameOnCanvas(canvas: HTMLCanvasElement, source: CanvasImageSo
   ctx.fillStyle = "#111";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+function clearPreviewCanvas(canvas: HTMLCanvasElement) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.save();
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+function drawVisualLayerOnCanvas(
+  canvas: HTMLCanvasElement,
+  source: CanvasImageSource,
+  visual: ClipVisual,
+  projectWidth: number,
+  projectHeight: number,
+  sourceWidth?: number | null,
+  sourceHeight?: number | null,
+) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const pw = Math.max(1, Math.round(projectWidth));
+  const ph = Math.max(1, Math.round(projectHeight));
+  const sw = Math.max(1, Math.round(sourceWidth ?? pw));
+  const sh = Math.max(1, Math.round(sourceHeight ?? ph));
+
+  // Map project-space coordinates to preview canvas while preserving project aspect ratio.
+  const projectToCanvasScale = Math.min(canvas.width / pw, canvas.height / ph);
+  const viewportWidth = pw * projectToCanvasScale;
+  const viewportHeight = ph * projectToCanvasScale;
+  const viewportLeft = (canvas.width - viewportWidth) / 2;
+  const viewportTop = (canvas.height - viewportHeight) / 2;
+
+  const baseScaleProject = visual.fitMode === "adapt" ? Math.min(pw / sw, ph / sh) : 1;
+  const finalScaleProject = baseScaleProject * (Math.max(1, visual.scalePct) / 100);
+  const drawWidthProject = sw * finalScaleProject;
+  const drawHeightProject = sh * finalScaleProject;
+
+  const centerXProject = pw / 2 + visual.x;
+  const centerYProject = ph / 2 + visual.y;
+  const centerX = viewportLeft + centerXProject * projectToCanvasScale;
+  const centerY = viewportTop + centerYProject * projectToCanvasScale;
+  const drawWidth = drawWidthProject * projectToCanvasScale;
+  const drawHeight = drawHeightProject * projectToCanvasScale;
+
+  ctx.save();
+  ctx.globalAlpha = clamp(visual.opacityPct / 100, 0, 1);
+  ctx.translate(centerX, centerY);
+  ctx.rotate((visual.rotationDeg * Math.PI) / 180);
+  ctx.drawImage(source, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
   ctx.restore();
 }
 
@@ -679,6 +870,8 @@ type ClipRef = {
   trackId: string;
   clipId: string;
 };
+
+type ProgramSlot = "a" | "b";
 
 type ClipWithRef = ClipRef & {
   clip: Clip;
@@ -824,6 +1017,7 @@ export default function App() {
   const [markOutMs, setMarkOutMs] = useState<number | null>(null);
   const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
 
   const [sourceVideoUrl, setSourceVideoUrl] = useState<string | null>(null);
   const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
@@ -900,12 +1094,20 @@ export default function App() {
   });
 
   const programCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const programVideoRef = useRef<HTMLVideoElement | null>(null);
+  const programVideoARef = useRef<HTMLVideoElement | null>(null);
+  const programVideoBRef = useRef<HTMLVideoElement | null>(null);
   const sourceCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const sourceVideoRef = useRef<HTMLVideoElement | null>(null);
   const assetFilesRef = useRef<Map<string, File>>(new Map());
   const previewAssetIdRef = useRef<string | null>(null);
   const programAssetIdRef = useRef<string | null>(null);
+  const activeProgramSlotRef = useRef<ProgramSlot>("a");
+  const programSlotClipIdRef = useRef<Record<ProgramSlot, string | null>>({ a: null, b: null });
+  const projectRef = useRef<ProjectState>(project);
+  const playheadMsRef = useRef(playheadMs);
+  const programClipContextRef = useRef<ProgramClipContext | null>(null);
+  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const imageLoadingRef = useRef<Set<string>>(new Set());
 
   const webCodecsAvailable = useMemo(
     () => typeof VideoDecoder !== "undefined" && typeof VideoEncoder !== "undefined",
@@ -959,7 +1161,6 @@ export default function App() {
     () => findProgramClipAtMs(project, playheadMs),
     [project, playheadMs],
   );
-  const programVideoUrl = programClipContext?.assetUrl ?? null;
   const programAssetId = programClipContext?.assetId ?? null;
   const programClipId = programClipContext?.clipId ?? null;
   const programClipStartMs = programClipContext?.clipStartMs ?? 0;
@@ -973,6 +1174,33 @@ export default function App() {
   const programLocalPlayheadUs = useMemo(
     () => (programClipContext ? toUs(programClipContext.localMs) : playheadUs),
     [playheadUs, programClipContext],
+  );
+  const programAssetKind = programClipContext?.assetKind ?? null;
+  const programVisualSignature = programClipContext
+    ? `${programClipContext.clipId}:${programClipContext.visual.x}:${programClipContext.visual.y}:${programClipContext.visual.scalePct}:${programClipContext.visual.rotationDeg}:${programClipContext.visual.opacityPct}:${programClipContext.visual.fitMode}`
+    : "none";
+  const selectedClipRole = useMemo(() => {
+    if (!selectedClip || !selectedTrack) return null;
+    return effectiveClipRole(selectedTrack.kind, selectedClip);
+  }, [selectedClip, selectedTrack]);
+  const hasPreviewOnlyVisualAdjustments = useMemo(
+    () =>
+      project.timeline.tracks.some((track) =>
+        track.clips.some((clip) => {
+          const role = effectiveClipRole(track.kind, clip);
+          if (role === "audio") return false;
+          const visual = clip.visual ?? defaultClipVisual();
+          return !(
+            visual.x === 0 &&
+            visual.y === 0 &&
+            visual.scalePct === 100 &&
+            visual.rotationDeg === 0 &&
+            visual.opacityPct === 100 &&
+            visual.fitMode === "pixel-100"
+          );
+        }),
+      ),
+    [project.timeline.tracks],
   );
 
   const clipExists = (trackId: string, clipId: string) =>
@@ -1037,6 +1265,7 @@ export default function App() {
           ? {
               ...asset,
               waveform: analysis.waveform,
+              heroThumbnail: analysis.heroThumbnail ?? asset.heroThumbnail,
               thumbnails: analysis.thumbnails,
               codec: asset.codec ?? analysis.codecGuess ?? undefined,
               durationMs: Math.max(asset.durationMs ?? 0, analysis.durationMs ?? 0) || asset.durationMs,
@@ -1055,6 +1284,23 @@ export default function App() {
     const cached = analysisCacheRef.current.get(cacheKey);
     if (cached) {
       applyAnalysisToAsset(assetId, cached);
+      if (!cached.heroThumbnail) {
+        void captureQuickVideoThumbnail(file, 1.5, {
+          width: 320,
+          height: 180,
+          quality: 0.9,
+        }).then((heroThumbnail) => {
+          if (!heroThumbnail) return;
+          const latest = analysisCacheRef.current.get(cacheKey);
+          if (!latest) return;
+          const next = { ...latest, heroThumbnail };
+          analysisCacheRef.current.set(cacheKey, next);
+          persistAnalysisCache();
+          applyAnalysisToAsset(assetId, next);
+        }).catch(() => {
+          // ignore hero thumbnail generation errors
+        });
+      }
       return;
     }
 
@@ -1089,9 +1335,10 @@ export default function App() {
       maxThumbnails: 12,
       waveformPoints: 96,
     })
-      .then((analysis) => {
+      .then(async (analysis) => {
         const next: AssetAnalysisCacheValue = {
           waveform: analysis.waveform,
+          heroThumbnail: analysis.heroThumbnail,
           thumbnails: analysis.thumbnails,
           codecGuess: analysis.codecGuess,
           durationMs: analysis.durationMs,
@@ -1105,8 +1352,20 @@ export default function App() {
           return;
         }
         if (next.thumbnails.length === 0) {
+          const quickThumb = await captureQuickVideoThumbnail(file).catch(() => null);
+          if (quickThumb) {
+            next.thumbnails = [quickThumb];
+          } else {
           queueFallbackWorker();
           return;
+          }
+        }
+        if (!next.heroThumbnail) {
+          next.heroThumbnail = await captureQuickVideoThumbnail(file, 1.5, {
+            width: 320,
+            height: 180,
+            quality: 0.9,
+          }).catch(() => null) ?? undefined;
         }
 
         analysisCacheRef.current.set(cacheKey, next);
@@ -2013,7 +2272,7 @@ export default function App() {
           outMs: 1200,
           mediaRole: "overlay",
           linkLocked: false,
-          transform: { x: 0, y: 0, scale: 1, rotation: 0 },
+          visual: defaultClipVisual(),
         };
         setSelection({ trackId: track.id, clipId: id });
         setSelectedClipKeys([clipKey(track.id, id)]);
@@ -2183,21 +2442,47 @@ export default function App() {
     });
   };
 
-  const updateSelectedTransform = (
-    patch: Partial<{
-      x: number;
-      y: number;
-      scale: number;
-      rotation: number;
-    }>,
-  ) => {
+  const updateSelectedVisual = (patch: Partial<ClipVisual>) => {
     updateSelectedClip((clip) => {
-      if (!clip.transform) return clip;
+      const role = selectedTrack ? effectiveClipRole(selectedTrack.kind, clip) : clip.mediaRole ?? "video";
+      if (role === "audio") return clip;
+      const current = clip.visual ?? defaultClipVisual();
       return {
         ...clip,
-        transform: {
-          ...clip.transform,
+        visual: {
+          ...current,
           ...patch,
+          scalePct: clamp(Math.round((patch.scalePct ?? current.scalePct)), 1, 2000),
+          opacityPct: clamp(Math.round((patch.opacityPct ?? current.opacityPct)), 0, 100),
+          fitMode: (patch.fitMode ?? current.fitMode) === "adapt" ? "adapt" : "pixel-100",
+        },
+      };
+    });
+  };
+
+  const resetSelectedVisual = () => {
+    updateSelectedClip((clip) => {
+      const role = selectedTrack ? effectiveClipRole(selectedTrack.kind, clip) : clip.mediaRole ?? "video";
+      if (role === "audio") return clip;
+      return {
+        ...clip,
+        visual: defaultClipVisual(),
+      };
+    });
+  };
+
+  const adaptSelectedVisualToFrame = () => {
+    updateSelectedClip((clip) => {
+      const role = selectedTrack ? effectiveClipRole(selectedTrack.kind, clip) : clip.mediaRole ?? "video";
+      if (role === "audio") return clip;
+      const current = clip.visual ?? defaultClipVisual();
+      return {
+        ...clip,
+        visual: {
+          ...current,
+          x: 0,
+          y: 0,
+          fitMode: "adapt",
         },
       };
     });
@@ -2822,6 +3107,7 @@ export default function App() {
       assetThumbBusyRef.current.delete(message.assetId);
       const analysis: AssetAnalysisCacheValue = {
         waveform: message.waveform,
+        heroThumbnail: message.heroThumbnail,
         thumbnails: message.thumbnails,
         codecGuess: message.codecGuess,
       };
@@ -2867,8 +3153,184 @@ export default function App() {
   }, [devMode]);
 
   useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
+
+  useEffect(() => {
+    playheadMsRef.current = playheadMs;
+  }, [playheadMs]);
+
+  useEffect(() => {
+    programClipContextRef.current = programClipContext;
+  }, [programClipContext]);
+
+  const getProgramVideoBySlot = (slot: ProgramSlot) =>
+    slot === "a" ? programVideoARef.current : programVideoBRef.current;
+
+  const getInactiveProgramSlot = (slot: ProgramSlot): ProgramSlot => (slot === "a" ? "b" : "a");
+
+  const drawProgramComposite = (
+    baseSource: CanvasImageSource | null,
+    baseContext: ProgramClipContext | null,
+    atMs: number,
+  ) => {
+    const canvas = programCanvasRef.current;
+    if (!canvas) return;
+
+    clearPreviewCanvas(canvas);
+    const stack = findProgramStackAtMs(projectRef.current, atMs);
+    if (stack.length === 0) return;
+    const projectWidth = Math.max(1, projectRef.current.meta.width);
+    const projectHeight = Math.max(1, projectRef.current.meta.height);
+
+    const drawImageContext = (context: ProgramClipContext) => {
+      const cached = imageCacheRef.current.get(context.assetUrl);
+      if (cached && cached.complete && cached.naturalWidth > 0) {
+        drawVisualLayerOnCanvas(
+          canvas,
+          cached,
+          context.visual,
+          projectWidth,
+          projectHeight,
+          context.sourceWidth,
+          context.sourceHeight,
+        );
+        return;
+      }
+      if (imageLoadingRef.current.has(context.assetUrl)) return;
+      imageLoadingRef.current.add(context.assetUrl);
+      const image = new Image();
+      image.onload = () => {
+        imageLoadingRef.current.delete(context.assetUrl);
+        imageCacheRef.current.set(context.assetUrl, image);
+        const activeVideo = getProgramVideoBySlot(activeProgramSlotRef.current);
+        const currentContext = programClipContextRef.current;
+        if (currentContext && currentContext.assetKind === "video" && activeVideo) {
+          drawProgramComposite(activeVideo, currentContext, playheadMsRef.current);
+        } else {
+          drawProgramComposite(null, currentContext, playheadMsRef.current);
+        }
+      };
+      image.onerror = () => {
+        imageLoadingRef.current.delete(context.assetUrl);
+      };
+      image.src = context.assetUrl;
+    };
+
+    const primary = baseContext ?? stack.find((item) => item.role === "video") ?? stack[0] ?? null;
+    if (!primary) return;
+
+    if (baseSource) {
+      drawVisualLayerOnCanvas(
+        canvas,
+        baseSource,
+        primary.visual,
+        projectWidth,
+        projectHeight,
+        primary.sourceWidth,
+        primary.sourceHeight,
+      );
+    } else if (primary.assetKind === "image") {
+      drawImageContext(primary);
+    }
+
+    for (const layer of stack) {
+      if (layer.clipId === primary.clipId) continue;
+      if (layer.assetKind === "image") {
+        drawImageContext(layer);
+      }
+    }
+  };
+
+  const primeProgramSlot = async (
+    slot: ProgramSlot,
+    clipContext: ProgramClipContext,
+    localMs: number,
+  ): Promise<boolean> => {
+    const video = getProgramVideoBySlot(slot);
+    if (!video) return false;
+    if (clipContext.assetKind !== "video") return false;
+
+    const targetSeconds = Math.max(0, localMs) / 1000;
+    const sameClipLoaded =
+      programSlotClipIdRef.current[slot] === clipContext.clipId &&
+      video.dataset.assetUrl === clipContext.assetUrl;
+
+    if (sameClipLoaded && video.readyState >= 1) {
+      try {
+        video.currentTime = targetSeconds;
+      } catch {
+        // ignore seek errors; caller handles fallback
+      }
+      return true;
+    }
+
+    const ready = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const timeoutId = window.setTimeout(() => {
+        cleanup();
+        settled = true;
+        resolve(false);
+      }, 1800);
+
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        video.removeEventListener("loadedmetadata", onLoadedMetadata);
+        video.removeEventListener("error", onError);
+      };
+
+      const onLoadedMetadata = () => {
+        if (settled) return;
+        cleanup();
+        settled = true;
+        resolve(true);
+      };
+
+      const onError = () => {
+        if (settled) return;
+        cleanup();
+        settled = true;
+        resolve(false);
+      };
+
+      if (!sameClipLoaded) {
+        video.dataset.assetUrl = clipContext.assetUrl;
+        video.dataset.clipId = clipContext.clipId;
+        video.src = clipContext.assetUrl;
+        video.load();
+      }
+
+      if (video.readyState >= 1) {
+        cleanup();
+        settled = true;
+        resolve(true);
+        return;
+      }
+
+      video.addEventListener("loadedmetadata", onLoadedMetadata);
+      video.addEventListener("error", onError);
+    });
+
+    if (!ready) return false;
+    try {
+      video.currentTime = targetSeconds;
+    } catch {
+      return false;
+    }
+    programSlotClipIdRef.current[slot] = clipContext.clipId;
+    return true;
+  };
+
+  useEffect(() => {
+    const videoA = programVideoARef.current;
+    const videoB = programVideoBRef.current;
+    if (videoA) videoA.muted = programTrackMuted;
+    if (videoB) videoB.muted = programTrackMuted;
+  }, [programTrackMuted]);
+
+  useEffect(() => {
     const playback = playbackRef.current;
-    if (!isPlaying || programVideoUrl) {
+    if (!isPlaying || programAssetKind === "video") {
       if (playback.rafId != null) {
         cancelAnimationFrame(playback.rafId);
         playback.rafId = null;
@@ -2906,14 +3368,10 @@ export default function App() {
       }
       playback.lastTs = null;
     };
-  }, [isPlaying, loopPlayback, markInMs, markOutMs, playbackDurationMs, programVideoUrl]);
+  }, [isPlaying, loopPlayback, markInMs, markOutMs, playbackDurationMs, programAssetKind]);
 
   useEffect(() => {
-    if (!isPlaying || !programVideoUrl || !programClipId) return;
-
-    const video = programVideoRef.current;
-    const canvas = programCanvasRef.current;
-    if (!video || !canvas) return;
+    if (!isPlaying || !programClipContext || programClipContext.assetKind !== "video" || !programClipId) return;
 
     const throttle = previewSeekThrottleRef.current;
     if (throttle.timeoutId != null) {
@@ -2930,26 +3388,85 @@ export default function App() {
 
     let cancelled = false;
     let rafId: number | null = null;
-    let rvfcId: number | null = null;
+    let activeSlot = activeProgramSlotRef.current;
+    let activeContext: ProgramClipContext = programClipContext;
+    let switching = false;
 
-    const hasRvfc =
-      typeof (video as HTMLVideoElement & { requestVideoFrameCallback?: unknown }).requestVideoFrameCallback ===
-      "function";
+    const maybePreloadNext = (currentMs: number) => {
+      const remainingMs = activeContext.clipEndMs - currentMs;
+      if (remainingMs > 400) return;
+      const next = findNextProgramClipOnTrack(projectRef.current, activeContext);
+      if (!next || next.assetKind !== "video") return;
+      const preloadSlot = getInactiveProgramSlot(activeSlot);
+      const preloadVideo = getProgramVideoBySlot(preloadSlot);
+      if (!preloadVideo) return;
+      if (programSlotClipIdRef.current[preloadSlot] === next.clipId && preloadVideo.readyState >= 1) return;
+      void primeProgramSlot(preloadSlot, next, next.inMs);
+    };
 
-    const drawAndSync = (mediaTimeSeconds?: number) => {
+    const switchToNextClip = async (overflowMs: number): Promise<boolean> => {
+      const next = findNextProgramClipOnTrack(projectRef.current, activeContext);
+      if (!next || next.assetKind !== "video") return false;
+      const nextLocalMs = clamp(next.inMs + overflowMs, next.inMs, next.outMs);
+      const targetSlot = getInactiveProgramSlot(activeSlot);
+      const loaded = await primeProgramSlot(targetSlot, next, nextLocalMs);
+      if (!loaded) {
+        setLog(`Preview handoff fallback failed for clip ${next.clipId}.`);
+        return false;
+      }
+
+      const previousVideo = getProgramVideoBySlot(activeSlot);
+      if (previousVideo) {
+        previousVideo.pause();
+      }
+      activeSlot = targetSlot;
+      activeContext = next;
+      programClipContextRef.current = next;
+      activeProgramSlotRef.current = targetSlot;
+
+      const nextVideo = getProgramVideoBySlot(targetSlot);
+      if (!nextVideo) return false;
+      nextVideo.muted = programTrackMuted;
+      try {
+        await nextVideo.play();
+      } catch (error) {
+        setLog(`Preview playback error: ${String(error)}`);
+        return false;
+      }
+      return true;
+    };
+
+    const drawAndSync = () => {
       if (cancelled) return;
-      const localMs = Math.round((mediaTimeSeconds ?? video.currentTime) * 1000);
-      const currentMs = clipStartMs + (localMs - clipInMs);
+      const activeVideo = getProgramVideoBySlot(activeSlot);
+      if (!activeVideo) {
+        rafId = requestAnimationFrame(drawAndSync);
+        return;
+      }
+      const localMs = Math.round(activeVideo.currentTime * 1000);
+      const currentMs = activeContext.clipStartMs + (localMs - activeContext.inMs);
 
       if (loopEnabled && currentMs >= loopEndMs) {
         const loopLocalMs = clipInMs + (loopStartMs - clipStartMs);
-        video.currentTime = Math.max(0, loopLocalMs) / 1000;
+        activeVideo.currentTime = Math.max(0, loopLocalMs) / 1000;
         setPlayheadMs(loopStartMs);
+        rafId = requestAnimationFrame(drawAndSync);
         return;
       }
 
-      if (currentMs >= clipEndMs) {
-        setPlayheadMs(clipEndMs);
+      if (currentMs >= activeContext.clipEndMs - 1) {
+        if (switching) return;
+        switching = true;
+        const overflowMs = Math.max(0, currentMs - activeContext.clipEndMs);
+        void switchToNextClip(overflowMs).then((switched) => {
+          switching = false;
+          if (!switched) {
+            setPlayheadMs(activeContext.clipEndMs);
+            setIsPlaying(false);
+            return;
+          }
+          rafId = requestAnimationFrame(drawAndSync);
+        });
         return;
       }
 
@@ -2959,29 +3476,11 @@ export default function App() {
         return;
       }
 
-      setPlayheadMs(clamp(currentMs, 0, playbackDurationMs));
-      drawVideoFrameOnCanvas(canvas, video);
-    };
-
-    const scheduleFrame = () => {
-      if (cancelled) return;
-      if (hasRvfc) {
-        rvfcId = (
-          video as HTMLVideoElement & {
-            requestVideoFrameCallback: (
-              callback: (now: number, metadata: VideoFrameCallbackMetadata) => void,
-            ) => number;
-          }
-        ).requestVideoFrameCallback((_now, metadata) => {
-          drawAndSync(metadata.mediaTime);
-          scheduleFrame();
-        });
-        return;
-      }
-      rafId = requestAnimationFrame(() => {
-        drawAndSync();
-        scheduleFrame();
-      });
+      const clampedMs = clamp(currentMs, 0, playbackDurationMs);
+      setPlayheadMs(clampedMs);
+      drawProgramComposite(activeVideo, activeContext, clampedMs);
+      maybePreloadNext(clampedMs);
+      rafId = requestAnimationFrame(drawAndSync);
     };
 
     const initialPlayheadMs = playheadMs;
@@ -2989,9 +3488,20 @@ export default function App() {
     void (async () => {
       try {
         const initialLocalMs = clipInMs + (clamp(initialPlayheadMs, clipStartMs, clipEndMs) - clipStartMs);
-        video.currentTime = Math.max(0, initialLocalMs) / 1000;
+        const loaded = await primeProgramSlot(activeSlot, activeContext, initialLocalMs);
+        if (!loaded) {
+          setLog(`Preview playback error: unable to load clip ${activeContext.clipId}`);
+          setIsPlaying(false);
+          return;
+        }
+        const video = getProgramVideoBySlot(activeSlot);
+        if (!video) {
+          setIsPlaying(false);
+          return;
+        }
+        video.muted = programTrackMuted;
         await video.play();
-        scheduleFrame();
+        rafId = requestAnimationFrame(drawAndSync);
       } catch (error) {
         setLog(`Preview playback error: ${String(error)}`);
         setIsPlaying(false);
@@ -3001,14 +3511,8 @@ export default function App() {
     return () => {
       cancelled = true;
       if (rafId != null) cancelAnimationFrame(rafId);
-      if (hasRvfc && rvfcId != null) {
-        (
-          video as HTMLVideoElement & {
-            cancelVideoFrameCallback: (id: number) => void;
-          }
-        ).cancelVideoFrameCallback(rvfcId);
-      }
-      video.pause();
+      const activeVideo = getProgramVideoBySlot(activeSlot);
+      if (activeVideo) activeVideo.pause();
     };
   }, [
     isPlaying,
@@ -3020,7 +3524,8 @@ export default function App() {
     programClipEndMs,
     programClipInMs,
     programClipStartMs,
-    programVideoUrl,
+    programAssetKind,
+    programTrackMuted,
     setLog,
   ]);
 
@@ -3332,9 +3837,14 @@ export default function App() {
         }
 
         latestHandledRequestIdRef.current = message.requestId;
-        const canvas = programCanvasRef.current;
-        if (canvas) {
-          drawVideoFrameOnCanvas(canvas, message.frame);
+        const context = programClipContextRef.current;
+        if (context && context.assetKind === "video") {
+          drawProgramComposite(message.frame, context, playheadMsRef.current);
+        } else {
+          const canvas = programCanvasRef.current;
+          if (canvas) {
+            drawVideoFrameOnCanvas(canvas, message.frame);
+          }
         }
         message.frame.close();
       }
@@ -3396,40 +3906,57 @@ export default function App() {
     if (!programAssetId) return;
     if (loadedDecoderAssetIdRef.current !== programAssetId) return;
     queuePreviewSeek(programLocalPlayheadUs);
-  }, [decoderMode, isPlaying, programAssetId, programLocalPlayheadUs]);
+  }, [decoderMode, isPlaying, programAssetId, programLocalPlayheadUs, programVisualSignature]);
 
   useEffect(() => {
     const useFallbackPreview = decoderMode !== "webcodecs";
     if (!useFallbackPreview || isPlaying) return;
-    if (!programVideoUrl || !programClipContext) return;
-
-    const video = programVideoRef.current;
-    const canvas = programCanvasRef.current;
-    if (!video || !canvas) return;
-
-    const targetSeconds = fromUs(programLocalPlayheadUs) / 1000;
-    const draw = () => drawVideoFrameOnCanvas(canvas, video);
-
-    const hasRvfc =
-      typeof (video as HTMLVideoElement & { requestVideoFrameCallback?: unknown }).requestVideoFrameCallback ===
-      "function";
-
-    if (hasRvfc) {
-      const onSeeked = () => {
-        (video as HTMLVideoElement & {
-          requestVideoFrameCallback: (
-            callback: (now: number, metadata: VideoFrameCallbackMetadata) => void,
-          ) => number;
-        }).requestVideoFrameCallback(() => draw());
-      };
-      video.addEventListener("seeked", onSeeked, { once: true });
-      video.currentTime = Math.max(0, targetSeconds);
-    } else {
-      const onSeeked = () => draw();
-      video.addEventListener("seeked", onSeeked, { once: true });
-      video.currentTime = Math.max(0, targetSeconds);
+    if (!programClipContext) {
+      const canvas = programCanvasRef.current;
+      if (canvas) clearPreviewCanvas(canvas);
+      return;
     }
-  }, [decoderMode, isPlaying, programClipContext, programLocalPlayheadUs, programVideoUrl]);
+    if (programClipContext.assetKind === "image") {
+      drawProgramComposite(null, programClipContext, playheadMs);
+      return;
+    }
+
+    const activeSlot = activeProgramSlotRef.current;
+    const video = getProgramVideoBySlot(activeSlot);
+    if (!video) return;
+    const targetLocalMs = fromUs(programLocalPlayheadUs);
+
+    void primeProgramSlot(activeSlot, programClipContext, targetLocalMs).then((loaded) => {
+      if (!loaded) return;
+
+      const draw = () => drawProgramComposite(video, programClipContext, playheadMs);
+      const hasRvfc =
+        typeof (video as HTMLVideoElement & { requestVideoFrameCallback?: unknown }).requestVideoFrameCallback ===
+        "function";
+
+      if (hasRvfc) {
+        const onSeeked = () => {
+          (video as HTMLVideoElement & {
+            requestVideoFrameCallback: (
+              callback: (now: number, metadata: VideoFrameCallbackMetadata) => void,
+            ) => number;
+          }).requestVideoFrameCallback(() => draw());
+        };
+        video.addEventListener("seeked", onSeeked, { once: true });
+        video.currentTime = Math.max(0, targetLocalMs / 1000);
+      } else {
+        const onSeeked = () => draw();
+        video.addEventListener("seeked", onSeeked, { once: true });
+        video.currentTime = Math.max(0, targetLocalMs / 1000);
+      }
+    });
+
+    const next = findNextProgramClipOnTrack(project, programClipContext);
+    if (next && next.assetKind === "video") {
+      const preloadSlot = getInactiveProgramSlot(activeSlot);
+      void primeProgramSlot(preloadSlot, next, next.inMs);
+    }
+  }, [decoderMode, isPlaying, playheadMs, programClipContext, programLocalPlayheadUs, project]);
 
   useEffect(() => {
     if (!sourceVideoUrl || sourceIsPlaying) return;
@@ -3628,8 +4155,8 @@ export default function App() {
     }
     if (preferredTrackId) {
       const preferredTrack = project.timeline.tracks.find((track) => track.id === preferredTrackId);
-      if (preferredTrack && preferredTrack.kind === "audio") {
-        setLog("Drop rejected: visual assets can only be dropped on visual tracks.");
+      if (preferredTrack && preferredTrack.kind !== "video") {
+        setLog("Drop rejected: video assets can only be dropped on video tracks.");
         return;
       }
     }
@@ -3640,7 +4167,7 @@ export default function App() {
       if (preferredTrackId != null) {
         const preferredIndex = tracks.findIndex((track) => track.id === preferredTrackId);
         const preferredTrack = preferredIndex >= 0 ? tracks[preferredIndex] : null;
-        if (!preferredTrack || preferredTrack.kind === "audio") return prev;
+        if (!preferredTrack || preferredTrack.kind !== "video") return prev;
         if (preferredTrack?.locked) {
           return prev;
         }
@@ -3674,9 +4201,10 @@ export default function App() {
         durationMs,
         inMs: 0,
         outMs: durationMs,
-        mediaRole: visualTrack.kind === "overlay" ? "overlay" : "video",
+        mediaRole: "video",
         linkGroupId,
         linkLocked: Boolean(linkGroupId),
+        visual: defaultClipVisual(),
       };
 
       visualTrack.clips.push(clip);
@@ -3702,6 +4230,7 @@ export default function App() {
             mediaRole: "audio",
             linkGroupId,
             linkLocked: true,
+            visual: undefined,
           };
           audioTrack.clips.push(audioClip);
           tracks[resolvedAudio.trackIndex] = audioTrack;
@@ -3791,6 +4320,81 @@ export default function App() {
   const aiSuggestionCount = aiLastOutput?.suggestions.length ?? 0;
   const canApplyAiResult = aiJobStatus === "completed" && (aiLastOutput?.clipPatches.length ?? 0) > 0;
   const timelineAssetMap = useMemo(() => new Map(project.assets.map((asset) => [asset.id, asset])), [project.assets]);
+  const projectSettingsValue = useMemo(
+    () => ({
+      width: project.meta.width,
+      height: project.meta.height,
+      fps: project.meta.fps,
+      durationMs: project.timeline.durationMs,
+      snapEnabled,
+      snapMs,
+      collisionMode,
+      rippleMode,
+      magnetEnabled: mainTrackMagnet,
+      zoomPps: pixelsPerSecond,
+    }),
+    [
+      project.meta.width,
+      project.meta.height,
+      project.meta.fps,
+      project.timeline.durationMs,
+      snapEnabled,
+      snapMs,
+      collisionMode,
+      rippleMode,
+      mainTrackMagnet,
+      pixelsPerSecond,
+    ],
+  );
+
+  const applyProjectSettings = (next: {
+    width: number;
+    height: number;
+    fps: number;
+    durationMs: number;
+    snapEnabled: boolean;
+    snapMs: number;
+    collisionMode: CollisionMode;
+    rippleMode: RippleMode;
+    magnetEnabled: boolean;
+    zoomPps: number;
+  }) => {
+    let appliedDurationMs = next.durationMs;
+    setProjectWithNormalize((prev) => {
+      const maxClipEndMs = prev.timeline.tracks.reduce(
+        (maxTrack, track) =>
+          Math.max(
+            maxTrack,
+            track.clips.reduce((maxClip, clip) => Math.max(maxClip, clip.startMs + clip.durationMs), 0),
+          ),
+        0,
+      );
+      appliedDurationMs = Math.max(1000, next.durationMs, maxClipEndMs);
+      return {
+        ...prev,
+        meta: {
+          ...prev.meta,
+          width: Math.max(16, next.width),
+          height: Math.max(16, next.height),
+          fps: Math.max(1, next.fps),
+        },
+        timeline: {
+          ...prev.timeline,
+          durationMs: appliedDurationMs,
+        },
+      };
+    });
+
+    setSnapEnabled(next.snapEnabled);
+    setSnapMs(Math.max(1, next.snapMs));
+    setMainTrackMagnet(next.magnetEnabled);
+    setCollisionMode(next.magnetEnabled && next.collisionMode === "allow-overlap" ? "no-overlap" : next.collisionMode);
+    setRippleMode(next.rippleMode);
+    setPixelsPerSecond(Math.max(20, Math.min(260, next.zoomPps)));
+    setPlayheadMs((prev) => clamp(prev, 0, appliedDurationMs));
+    setSourcePlayheadMs((prev) => clamp(prev, 0, sourceMonitorDurationMs));
+    setLog("Project settings updated.");
+  };
 
   return (
     <>
@@ -3799,6 +4403,7 @@ export default function App() {
           <TopToolbar
             projectName={project.meta.projectId}
             onProjectNameChange={setProjectName}
+            onOpenProjectSettings={() => setProjectSettingsOpen(true)}
             onUndo={undo}
             onRedo={redo}
             onExport={() => {
@@ -3848,10 +4453,10 @@ export default function App() {
         preview={(
           <PreviewPanel
             programCanvasRef={programCanvasRef}
-            programVideoRef={programVideoRef}
+            programVideoARef={programVideoARef}
+            programVideoBRef={programVideoBRef}
             sourceCanvasRef={sourceCanvasRef}
             sourceVideoRef={sourceVideoRef}
-            programVideoUrl={programVideoUrl}
             sourceVideoUrl={sourceVideoUrl}
             programMuted={programTrackMuted}
             onProgramLoadedMetadata={onProgramMetadataLoaded}
@@ -3882,9 +4487,12 @@ export default function App() {
         inspector={(
           <InspectorPanel
             selectedClip={selectedClip}
+            selectedClipRole={selectedClipRole}
             selectedCount={selectedClipCount}
             onUpdateTiming={updateSelectedTiming}
-            onUpdateTransform={updateSelectedTransform}
+            onUpdateVisual={updateSelectedVisual}
+            onResetVisual={resetSelectedVisual}
+            onAdaptToFrame={adaptSelectedVisualToFrame}
           />
         )}
         timeline={(
@@ -3999,9 +4607,16 @@ export default function App() {
           void retryExportJob();
         }}
         onDownload={downloadExport}
+        previewOnlyVisualWarning={hasPreviewOnlyVisualAdjustments}
       />
 
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+      <ProjectSettingsModal
+        open={projectSettingsOpen}
+        value={projectSettingsValue}
+        onClose={() => setProjectSettingsOpen(false)}
+        onApply={applyProjectSettings}
+      />
     </>
   );
 }
