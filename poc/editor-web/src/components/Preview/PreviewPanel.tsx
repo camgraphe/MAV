@@ -7,6 +7,7 @@ type PreviewPanelProps = {
   sourceVideoRef: RefObject<HTMLVideoElement | null>;
   programVideoUrl: string | null;
   sourceVideoUrl: string | null;
+  programMuted: boolean;
   onProgramLoadedMetadata: (durationMs: number, width: number, height: number) => void;
   onSourceLoadedMetadata: (durationMs: number) => void;
   playheadMs: number;
@@ -36,6 +37,7 @@ export function PreviewPanel({
   sourceVideoRef,
   programVideoUrl,
   sourceVideoUrl,
+  programMuted,
   onProgramLoadedMetadata,
   onSourceLoadedMetadata,
   playheadMs,
@@ -157,6 +159,7 @@ export function PreviewPanel({
         ref={programVideoRef}
         className="hiddenVideo"
         src={programVideoUrl ?? undefined}
+        muted={programMuted}
         playsInline
         preload="auto"
         onLoadedMetadata={(event) => {
