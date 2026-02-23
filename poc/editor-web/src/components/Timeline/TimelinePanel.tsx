@@ -30,10 +30,22 @@ type Selection = {
 type AssetMeta = {
   id: string;
   kind: "video" | "audio" | "image";
+  durationMs?: number;
+  name?: string;
   hasAudio?: boolean;
   thumbnails?: string[];
   waveform?: number[];
 };
+
+type InteractionPreview = {
+  trackId: string;
+  clipId: string;
+  startMs: number;
+  durationMs: number;
+  inMs: number;
+  outMs: number;
+  snapGuideMs: number | null;
+} | null;
 
 type TimelinePanelProps = {
   tracks: Track[];
@@ -66,8 +78,10 @@ type TimelinePanelProps = {
   onSplit: () => void;
   onDelete: () => void;
   getClipRenderState: (trackId: string, clip: Clip) => Clip;
+  interactionPreview: InteractionPreview;
   onClipPointerDown: (event: React.PointerEvent<HTMLButtonElement>, trackId: string, clip: Clip) => void;
   onAssetDrop: (assetId: string, trackId: string, startMs: number) => void;
+  onAssetDropToNewTrack: (assetId: string, trackKind: "video" | "audio", startMs: number) => void;
   onSelectClipKeys: (keys: string[], primary?: { trackId: string; clipId: string } | null) => void;
   onClearSelection: () => void;
   onSplitClip: (trackId: string, clipId: string) => void;
@@ -152,8 +166,10 @@ export function TimelinePanel({
   onSplit,
   onDelete,
   getClipRenderState,
+  interactionPreview,
   onClipPointerDown,
   onAssetDrop,
+  onAssetDropToNewTrack,
   onSelectClipKeys,
   onClearSelection,
   onSplitClip,
@@ -167,12 +183,17 @@ export function TimelinePanel({
   onDropRejected,
   assetMap,
 }: TimelinePanelProps) {
+  const visibleTracks = useMemo(() => tracks.filter((track) => track.kind !== "overlay"), [tracks]);
   const selected = new Set(selectedClipKeys);
   const [dragOver, setDragOver] = useState(false);
   const [dragLane, setDragLane] = useState<{
     trackId: string;
     compatible: boolean;
     message: string;
+    startMs: number;
+    durationMs: number;
+    label: string;
+    createTrackKind?: "video" | "audio";
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -190,9 +211,9 @@ export function TimelinePanel({
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [viewportContentWidthPx, setViewportContentWidthPx] = useState(0);
-  const hasAnyClip = tracks.some((track) => track.clips.length > 0);
-  const timelineHeight = Math.max(180, tracks.length * LANE_HEIGHT + 8);
-  const firstAudioLane = tracks.findIndex((track) => track.kind === "audio");
+  const hasAnyClip = visibleTracks.some((track) => track.clips.length > 0);
+  const timelineHeight = Math.max(180, visibleTracks.length * LANE_HEIGHT + 8);
+  const firstAudioLane = visibleTracks.findIndex((track) => track.kind === "audio");
   const timelineContentWidthPx = Math.max(zoomWidthPx, viewportContentWidthPx);
   const timelineWorkspaceWidthPx = TRACK_LABEL_WIDTH + timelineContentWidthPx;
   const rulerStepMs = pixelsPerSecond >= 180 ? 500 : pixelsPerSecond >= 100 ? 1000 : 2000;
@@ -211,7 +232,7 @@ export function TimelinePanel({
   }, [maxRulerMs, pixelsPerSecond, rulerStepMs]);
 
   const clipLayout = useMemo(() => {
-    return tracks.flatMap((track, rowIndex) =>
+    return visibleTracks.flatMap((track, rowIndex) =>
       track.clips.map((sourceClip) => {
         const clip = getClipRenderState(track.id, sourceClip);
         const widthPx = Math.max(24, (clip.durationMs / 1000) * pixelsPerSecond);
@@ -226,7 +247,7 @@ export function TimelinePanel({
         };
       }),
     );
-  }, [tracks, getClipRenderState, pixelsPerSecond]);
+  }, [visibleTracks, getClipRenderState, pixelsPerSecond]);
 
   useEffect(() => {
     const close = () => setContextMenu(null);
@@ -285,38 +306,63 @@ export function TimelinePanel({
     const scrollTop = scroller?.scrollTop ?? 0;
     const x = Math.max(0, event.clientX - rect.left + scrollLeft);
     const y = Math.max(0, event.clientY - rect.top + scrollTop);
-    const laneIndex = Math.min(tracks.length - 1, Math.max(0, Math.floor(y / LANE_HEIGHT)));
-    const lane = tracks[laneIndex];
+    const laneIndex = Math.floor(y / LANE_HEIGHT);
+    const lane = laneIndex >= 0 && laneIndex < visibleTracks.length ? visibleTracks[laneIndex] : undefined;
     const startMs = Math.round((x / pixelsPerSecond) * 1000);
-    return { lane, startMs };
+    const outOfBounds: "above" | "below" | null = lane == null ? (laneIndex < 0 ? "above" : "below") : null;
+    return { lane, startMs, outOfBounds };
   };
 
-  const resolveDropCompatibility = (assetId: string, lane: Track | undefined) => {
-    if (!lane) {
-      return { compatible: false, message: "No target track." };
-    }
+  const resolveDropCompatibility = (
+    assetId: string,
+    lane: Track | undefined,
+    outOfBounds: "above" | "below" | null,
+  ) => {
     const asset = assetMap.get(assetId);
+    if (!lane && outOfBounds && asset) {
+      if (asset.kind === "video" || asset.kind === "image") {
+        return {
+          compatible: true,
+          message: "Drop to create a new video track",
+          createTrackKind: "video" as const,
+        };
+      }
+      if (asset.kind === "audio") {
+        return {
+          compatible: true,
+          message: "Drop to create a new audio track",
+          createTrackKind: "audio" as const,
+        };
+      }
+    }
+
+    if (!lane) {
+      return { compatible: false, message: "No target track.", createTrackKind: undefined };
+    }
     if (!asset) {
-      return { compatible: true, message: `Drop on ${trackDisplayName(lane, tracks)}` };
+      return {
+        compatible: true,
+        message: `Drop on ${trackDisplayName(lane, visibleTracks)}`,
+        createTrackKind: undefined,
+      };
     }
 
     const isVideoAsset = asset.kind === "video";
     const isOverlayAsset = asset.kind === "image";
     const isAudioAsset = asset.kind === "audio";
     const isVideoLane = lane.kind === "video";
-    const isOverlayLane = lane.kind === "overlay";
     const isAudioLane = lane.kind === "audio";
     const compatible =
-      (isVideoAsset && isVideoLane) || (isOverlayAsset && isOverlayLane) || (isAudioAsset && isAudioLane);
+      ((isVideoAsset || isOverlayAsset) && isVideoLane) || (isAudioAsset && isAudioLane);
     const message = compatible
-      ? `Drop on ${trackDisplayName(lane, tracks)}`
+      ? `Drop on ${trackDisplayName(lane, visibleTracks)}`
       : isVideoAsset
         ? "Video only on video tracks."
         : isOverlayAsset
-          ? "Overlay only on overlay tracks."
+          ? "Images/graphics only on video tracks."
           : "Audio only on audio tracks.";
 
-    return { compatible, message };
+    return { compatible, message, createTrackKind: undefined };
   };
 
   useEffect(() => {
@@ -382,9 +428,6 @@ export function TimelinePanel({
           </button>
           <button type="button" className="iconBtn tiny" title="Add video track" onClick={() => onAddTrack("video")}>
             +V
-          </button>
-          <button type="button" className="iconBtn tiny" title="Add overlay track" onClick={() => onAddTrack("overlay")}>
-            +O
           </button>
           <button type="button" className="iconBtn tiny" title="Add audio track" onClick={() => onAddTrack("audio")}>
             +A
@@ -515,16 +558,18 @@ export function TimelinePanel({
           </div>
 
           <div className="trackColumn" style={{ width: `${TRACK_LABEL_WIDTH}px`, height: `${timelineHeight}px` }}>
-            {tracks.map((track, rowIndex) => {
+            {visibleTracks.map((track, rowIndex) => {
               return (
                 <div
                   key={`header-${track.id}`}
                   className={`trackHeaderRow ${firstAudioLane >= 0 && rowIndex === firstAudioLane ? "sectionStart" : ""} ${
                     dragLane?.trackId === track.id ? (dragLane.compatible ? "dropTarget" : "dropRejected") : ""
                   }`}
+                  data-timeline-track-id={track.id}
+                  data-timeline-track-kind={track.kind}
                   style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}
                 >
-                  <strong>{trackDisplayName(track, tracks)}</strong>
+                  <strong>{trackDisplayName(track, visibleTracks)}</strong>
                   <div className="trackHeaderActions">
                     <button
                       type="button"
@@ -623,15 +668,20 @@ export function TimelinePanel({
               event.preventDefault();
               const assetId =
                 event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
-              const { lane } = resolveDropLane(event);
-              const { compatible, message } = resolveDropCompatibility(assetId, lane);
+              const { lane, startMs, outOfBounds } = resolveDropLane(event);
+              const { compatible, message, createTrackKind } = resolveDropCompatibility(assetId, lane, outOfBounds);
               event.dataTransfer.dropEffect = compatible ? "copy" : "none";
               setDragOver(true);
-              if (lane) {
+              if (lane || createTrackKind) {
+                const asset = assetMap.get(assetId);
                 setDragLane({
-                  trackId: lane.id,
+                  trackId: lane?.id ?? `new-track-${createTrackKind ?? "video"}`,
                   compatible,
                   message,
+                  startMs: Math.max(0, startMs),
+                  durationMs: Math.max(300, Math.round(asset?.durationMs ?? 3000)),
+                  label: asset?.name ?? (asset?.kind === "image" ? "image" : asset?.kind === "audio" ? "audio" : "clip"),
+                  createTrackKind,
                 });
               } else {
                 setDragLane(null);
@@ -651,14 +701,19 @@ export function TimelinePanel({
               const assetId =
                 event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
               if (!assetId) return;
-              const { lane, startMs } = resolveDropLane(event);
-              if (!lane) return;
-              const { compatible, message } = resolveDropCompatibility(assetId, lane);
+              const { lane, startMs, outOfBounds } = resolveDropLane(event);
+              const { compatible, message, createTrackKind } = resolveDropCompatibility(assetId, lane, outOfBounds);
               if (!compatible) {
                 onDropRejected(`Drop rejected: ${message}`);
                 return;
               }
-              onAssetDrop(assetId, lane.id, startMs);
+              if (lane) {
+                onAssetDrop(assetId, lane.id, startMs);
+                return;
+              }
+              if (createTrackKind) {
+                onAssetDropToNewTrack(assetId, createTrackKind, startMs);
+              }
             }}
           >
             <div
@@ -678,13 +733,15 @@ export function TimelinePanel({
             {!hasAnyClip ? <div className="timelineEmptyState">Drag media here to start.</div> : null}
             {dragOver ? <div className="timelineDropState">{dragLane?.message ?? "Drop to add clip."}</div> : null}
 
-            {tracks.map((track, rowIndex) => {
+            {visibleTracks.map((track, rowIndex) => {
               return (
                 <div
                   key={track.id}
                   className={`trackLane ${firstAudioLane >= 0 && rowIndex === firstAudioLane ? "sectionStart" : ""} ${
                     dragLane?.trackId === track.id ? (dragLane.compatible ? "dropTarget" : "dropRejected") : ""
                   }`}
+                  data-timeline-track-id={track.id}
+                  data-timeline-track-kind={track.kind}
                   style={{ top: `${rowIndex * LANE_HEIGHT}px`, height: `${LANE_HEIGHT}px` }}
                 >
                   {track.clips.map((sourceClip) => {
@@ -697,6 +754,20 @@ export function TimelinePanel({
                     const tileCount = Math.max(1, Math.ceil(widthPx / 42));
                     const waveform = asset?.waveform ?? [];
                     const isAudioClip = track.kind === "audio" || asset?.kind === "audio";
+                    const waveformBars = Math.max(12, Math.floor(Math.max(24, widthPx - 8) / 2));
+                    const waveformSourceDurationMs = Math.max(
+                      1,
+                      asset?.durationMs ?? Math.max(clip.outMs, clip.inMs + clip.durationMs),
+                    );
+                    const waveformInMs = Math.min(
+                      waveformSourceDurationMs,
+                      Math.max(0, clip.inMs),
+                    );
+                    const waveformOutMs = Math.min(
+                      waveformSourceDurationMs,
+                      Math.max(waveformInMs, clip.outMs),
+                    );
+                    const waveformVisibleMs = Math.max(1, waveformOutMs - waveformInMs);
 
                     return (
                       <button
@@ -736,9 +807,16 @@ export function TimelinePanel({
                         ) : null}
                         {isAudioClip && waveform.length > 0 ? (
                           <span className="clipWaveform" aria-hidden>
-                            {waveform.slice(0, 90).map((value, index) => (
-                              <i key={`${sourceClip.id}-wave-${index}`} style={{ height: `${Math.max(4, value * 24)}px` }} />
-                            ))}
+                            {Array.from({ length: waveformBars }).map((_, index) => {
+                              const positionRatio = index / Math.max(1, waveformBars - 1);
+                              const sourceMs = waveformInMs + positionRatio * waveformVisibleMs;
+                              const sourceRatio = sourceMs / waveformSourceDurationMs;
+                              const sampleIndex = Math.min(waveform.length - 1, Math.floor(sourceRatio * (waveform.length - 1)));
+                              const sample = waveform[sampleIndex] ?? 0;
+                              return (
+                                <i key={`${sourceClip.id}-wave-${index}`} style={{ height: `${Math.max(4, sample * 24)}px` }} />
+                              );
+                            })}
                           </span>
                         ) : null}
                         <span className="clipHandle left" />
@@ -761,6 +839,36 @@ export function TimelinePanel({
                   height: `${marquee.height}px`,
                 }}
               />
+            ) : null}
+            {interactionPreview && visibleTracks.some((track) => track.id === interactionPreview.trackId) ? (
+              <div
+                className="clipGhost"
+                style={{
+                  left: `${(interactionPreview.startMs / 1000) * pixelsPerSecond}px`,
+                  top: `${visibleTracks.findIndex((track) => track.id === interactionPreview.trackId) * LANE_HEIGHT + CLIP_TOP}px`,
+                  width: `${Math.max(24, (interactionPreview.durationMs / 1000) * pixelsPerSecond)}px`,
+                  height: `${CLIP_HEIGHT}px`,
+                }}
+              />
+            ) : null}
+            {dragOver && dragLane && dragLane.compatible ? (
+              <div
+                className="clipGhost assetGhost"
+                style={{
+                  left: `${(dragLane.startMs / 1000) * pixelsPerSecond}px`,
+                  top: `${(
+                    dragLane.createTrackKind === "video"
+                      ? CLIP_TOP
+                      : dragLane.createTrackKind === "audio"
+                        ? Math.max(0, timelineHeight - LANE_HEIGHT + CLIP_TOP)
+                        : visibleTracks.findIndex((track) => track.id === dragLane.trackId) * LANE_HEIGHT + CLIP_TOP
+                  )}px`,
+                  width: `${Math.max(28, (dragLane.durationMs / 1000) * pixelsPerSecond)}px`,
+                  height: `${CLIP_HEIGHT}px`,
+                }}
+              >
+                <span className="clipGhostLabel">{dragLane.label}</span>
+              </div>
             ) : null}
           </div>
         </div>
