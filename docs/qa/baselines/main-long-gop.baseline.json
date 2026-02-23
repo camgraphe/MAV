@@ -2,7 +2,7 @@
   "profile": "main-long-gop",
   "mediaFilename": "qa_h264_main_long_gop_aac.mp4",
   "mediaPath": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
-  "runAt": "2026-02-23T13:43:59.193Z",
+  "runAt": "2026-02-23T13:47:28.462Z",
   "status": "ok",
   "pass": true,
   "thresholds": {
@@ -12,10 +12,10 @@
   },
   "reasons": [],
   "metric": {
-    "runAt": "2026-02-23T13:43:59.188Z",
+    "runAt": "2026-02-23T13:47:28.459Z",
     "profile": "main-long-gop",
     "totalScenarios": 50,
-    "time_to_first_frame_ms": 40.4448979618598,
+    "time_to_first_frame_ms": 28.402040817299667,
     "seek_success_pct": 98,
     "decode_errors": 0,
     "stale_results": 1,
@@ -39,7 +39,7 @@
       "timestampUs": 2833333,
       "status": "ok",
       "fromCache": false,
-      "decodeMs": 39.30000001192093,
+      "decodeMs": 23.400000005960464,
       "skippedToIdrSamples": 0,
       "keyframeStartUs": 83333,
       "reason": "qa"

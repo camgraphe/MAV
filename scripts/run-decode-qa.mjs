@@ -232,8 +232,10 @@ async function main() {
     await mkdir(outputDir, { recursive: true });
     await mkdir(path.join(outputDir, "history"), { recursive: true });
 
+    const browserChannel = process.env.PLAYWRIGHT_CHANNEL?.trim() || null;
     browser = await chromium.launch({
       headless: process.env.HEADLESS !== "false",
+      ...(browserChannel ? { channel: browserChannel } : {}),
     });
 
     context = await browser.newContext();
@@ -345,8 +347,12 @@ async function main() {
       await writeFile(historyPath, JSON.stringify(record, null, 2));
 
       outputs.push(record);
+      const reasonSuffix =
+        Array.isArray(record.reasons) && record.reasons.length > 0
+          ? ` reasons=${record.reasons.join(" | ")}`
+          : "";
       console.log(
-        `${profile}: ${record.status} (${record.pass ? "pass" : "fail"}) -> ${path.relative(rootDir, latestPath)}`,
+        `${profile}: ${record.status} (${record.pass ? "pass" : "fail"}) -> ${path.relative(rootDir, latestPath)}${reasonSuffix}`,
       );
     }
 
@@ -384,7 +390,9 @@ async function main() {
 
     const failed = outputs.filter((item) => !item.pass);
     if (failed.length > 0) {
-      console.error(`QA decode failures: ${failed.map((item) => item.profile).join(", ")}`);
+      console.error(
+        `QA decode failures: ${failed.map((item) => `${item.profile}[${(item.reasons ?? []).join(";")}]`).join(", ")}`,
+      );
       if (enforceThresholds) {
         process.exitCode = 1;
       }

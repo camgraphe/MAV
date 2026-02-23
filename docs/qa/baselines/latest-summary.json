@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-23T13:44:03.108Z",
+  "generatedAt": "2026-02-23T13:47:31.541Z",
   "appUrl": "http://127.0.0.1:4174",
   "scenarioCount": 50,
   "thresholds": {
@@ -19,7 +19,7 @@
       "profile": "baseline-short-gop",
       "mediaFilename": "qa_h264_baseline_short_gop_aac.mp4",
       "mediaPath": "poc/editor-web/.qa-media/qa_h264_baseline_short_gop_aac.mp4",
-      "runAt": "2026-02-23T13:43:56.531Z",
+      "runAt": "2026-02-23T13:47:26.392Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -29,15 +29,15 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T13:43:56.523Z",
+        "runAt": "2026-02-23T13:47:26.386Z",
         "profile": "baseline-short-gop",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 11.008163262994922,
-        "seek_success_pct": 98,
+        "time_to_first_frame_ms": 7.526000003218651,
+        "seek_success_pct": 100,
         "decode_errors": 0,
-        "stale_results": 1,
+        "stale_results": 0,
         "drift_within_1frame_pct": 100,
-        "avg_drift_ms": 9.266551020408162,
+        "avg_drift_ms": 9.08122,
         "max_drift_ms": 20.653
       },
       "diagnostics": {
@@ -56,7 +56,7 @@
           "timestampUs": 458333,
           "status": "ok",
           "fromCache": false,
-          "decodeMs": 5.100000023841858,
+          "decodeMs": 3.5,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": 0,
           "reason": "qa"
@@ -82,7 +82,7 @@
       "profile": "main-long-gop",
       "mediaFilename": "qa_h264_main_long_gop_aac.mp4",
       "mediaPath": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
-      "runAt": "2026-02-23T13:43:59.193Z",
+      "runAt": "2026-02-23T13:47:28.462Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -92,10 +92,10 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T13:43:59.188Z",
+        "runAt": "2026-02-23T13:47:28.459Z",
         "profile": "main-long-gop",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 40.4448979618598,
+        "time_to_first_frame_ms": 28.402040817299667,
         "seek_success_pct": 98,
         "decode_errors": 0,
         "stale_results": 1,
@@ -119,7 +119,7 @@
           "timestampUs": 2833333,
           "status": "ok",
           "fromCache": false,
-          "decodeMs": 39.30000001192093,
+          "decodeMs": 23.400000005960464,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": 83333,
           "reason": "qa"
@@ -145,7 +145,7 @@
       "profile": "high-long-gop",
       "mediaFilename": "qa_h264_high_long_gop_aac.mp4",
       "mediaPath": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
-      "runAt": "2026-02-23T13:44:02.056Z",
+      "runAt": "2026-02-23T13:47:30.526Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -155,10 +155,10 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T13:44:02.050Z",
+        "runAt": "2026-02-23T13:47:30.523Z",
         "profile": "high-long-gop",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 44.53061224672259,
+        "time_to_first_frame_ms": 28.302040816569814,
         "seek_success_pct": 98,
         "decode_errors": 0,
         "stale_results": 1,
@@ -182,7 +182,7 @@
           "timestampUs": 5625000,
           "status": "ok",
           "fromCache": false,
-          "decodeMs": 19.900000005960464,
+          "decodeMs": 13.299999982118607,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": 5083333,
           "reason": "qa"
@@ -208,7 +208,7 @@
       "profile": "no-audio",
       "mediaFilename": "chromium_bear_silent.mp4",
       "mediaPath": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
-      "runAt": "2026-02-23T13:44:02.856Z",
+      "runAt": "2026-02-23T13:47:31.293Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -218,10 +218,10 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T13:44:02.852Z",
+        "runAt": "2026-02-23T13:47:31.289Z",
         "profile": "no-audio",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 2.644000000357628,
+        "time_to_first_frame_ms": 1.9679999995231627,
         "seek_success_pct": 100,
         "decode_errors": 0,
         "stale_results": 0,
@@ -245,7 +245,7 @@
           "timestampUs": 367033,
           "status": "ok",
           "fromCache": true,
-          "decodeMs": 0.09999999403953552,
+          "decodeMs": 0,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": null,
           "reason": "qa"
@@ -271,7 +271,7 @@
       "profile": "fmp4",
       "mediaFilename": "chromium_bear_640x360_av_frag_fmp4.mp4",
       "mediaPath": "poc/editor-web/.qa-media/chromium_bear_640x360_av_frag_fmp4.mp4",
-      "runAt": "2026-02-23T13:44:03.107Z",
+      "runAt": "2026-02-23T13:47:31.540Z",
       "status": "skipped-fmp4-fallback-policy",
       "pass": true,
       "thresholds": {
