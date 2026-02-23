@@ -9,6 +9,7 @@ Files:
 
 - `<profile>.baseline.json`: latest committed baseline per profile.
 - `history/<profile>.<timestamp>.json`: timestamped captures.
+- `history/<runId>.outliers.json`: top drift outliers sorted by `abs(driftFrames)`.
 - `latest-summary.json`: aggregate output of the last automated run.
 
 Current gate thresholds (strict mode):
@@ -19,7 +20,7 @@ Current gate thresholds (strict mode):
 
 Run modes:
 
-- Optional gate (non-blocking): CI workflow `Decode QA (Optional Gate)` with `continue-on-error`.
+- CI required check: workflow `Decode QA Gate`, job `decode-qa`.
 - Strict local gate: `pnpm qa:decode:gate --start-server`.
 
 Current profile set:
