@@ -774,6 +774,10 @@ export default function App() {
   );
   const programVideoUrl = programClipContext?.assetUrl ?? null;
   const programAssetId = programClipContext?.assetId ?? null;
+  const programClipId = programClipContext?.clipId ?? null;
+  const programClipStartMs = programClipContext?.clipStartMs ?? 0;
+  const programClipEndMs = programClipContext?.clipEndMs ?? 0;
+  const programClipInMs = programClipContext?.inMs ?? 0;
   const programTrackMuted = useMemo(() => {
     if (!programClipContext) return false;
     const track = project.timeline.tracks.find((item) => item.id === programClipContext.trackId);
@@ -2423,7 +2427,7 @@ export default function App() {
   }, [isPlaying, loopPlayback, markInMs, markOutMs, playbackDurationMs, programVideoUrl]);
 
   useEffect(() => {
-    if (!isPlaying || !programVideoUrl || !programClipContext) return;
+    if (!isPlaying || !programVideoUrl || !programClipId) return;
 
     const video = programVideoRef.current;
     const canvas = programCanvasRef.current;
@@ -2438,9 +2442,9 @@ export default function App() {
     const loopStartMs = clamp(markInMs ?? 0, 0, playbackDurationMs);
     const loopEndMs = clamp(markOutMs ?? playbackDurationMs, 0, playbackDurationMs);
     const loopEnabled = loopPlayback && loopEndMs > loopStartMs;
-    const clipStartMs = programClipContext.clipStartMs;
-    const clipEndMs = programClipContext.clipEndMs;
-    const clipInMs = programClipContext.inMs;
+    const clipStartMs = programClipStartMs;
+    const clipEndMs = programClipEndMs;
+    const clipInMs = programClipInMs;
 
     let cancelled = false;
     let rafId: number | null = null;
@@ -2530,7 +2534,10 @@ export default function App() {
     markInMs,
     markOutMs,
     playbackDurationMs,
-    programClipContext,
+    programClipId,
+    programClipEndMs,
+    programClipInMs,
+    programClipStartMs,
     programVideoUrl,
     setLog,
   ]);

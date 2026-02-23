@@ -59,7 +59,7 @@ export function PreviewPanel({
   onSourceScrub,
   onSourceStepFrame,
 }: PreviewPanelProps) {
-  const [showSourceMonitor, setShowSourceMonitor] = useState(true);
+  const [showSourceMonitor, setShowSourceMonitor] = useState(false);
   const maxDuration = Math.max(1000, durationMs);
   const sourceMaxDuration = Math.max(1000, sourceDurationMs);
 
