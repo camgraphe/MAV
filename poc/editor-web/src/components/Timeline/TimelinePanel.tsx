@@ -1010,7 +1010,9 @@ export function TimelinePanel({
 
               if (hasCreateTrackIntent && interactionPreview.createTrackKind && interactionPreview.createTrackEdge) {
                 trackGhostTop =
-                  interactionPreview.createTrackEdge === "above" ? -LANE_HEIGHT : timelineHeight;
+                  interactionPreview.createTrackKind === "video"
+                    ? 0
+                    : Math.max(0, timelineHeight - LANE_HEIGHT);
                 ghostTop = trackGhostTop + CLIP_TOP;
                 actionLabel = `+ Add a ${interactionPreview.createTrackKind} track`;
               } else if (previewTrackIndex >= 0) {
@@ -1067,7 +1069,7 @@ export function TimelinePanel({
                   <div
                     className="timelineTrackGhost createTrackPreview"
                     style={{
-                      top: `${dragLane.createTrackKind === "video" ? -LANE_HEIGHT : timelineHeight}px`,
+                      top: `${dragLane.createTrackKind === "video" ? 0 : Math.max(0, timelineHeight - LANE_HEIGHT)}px`,
                       height: `${LANE_HEIGHT}px`,
                     }}
                   >
@@ -1080,9 +1082,9 @@ export function TimelinePanel({
                     left: `${(dragLane.startMs / 1000) * pixelsPerSecond}px`,
                     top: `${(
                       dragLane.createTrackKind === "video"
-                        ? -LANE_HEIGHT + CLIP_TOP
+                        ? CLIP_TOP
                         : dragLane.createTrackKind === "audio"
-                          ? timelineHeight + CLIP_TOP
+                          ? Math.max(0, timelineHeight - LANE_HEIGHT + CLIP_TOP)
                           : visibleTracks.findIndex((track) => track.id === dragLane.trackId) * LANE_HEIGHT + CLIP_TOP
                     )}px`,
                     width: `${Math.max(28, (dragLane.durationMs / 1000) * pixelsPerSecond)}px`,
