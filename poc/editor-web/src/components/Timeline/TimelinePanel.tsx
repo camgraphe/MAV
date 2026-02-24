@@ -47,6 +47,12 @@ type InteractionPreview = {
   snapGuideMs: number | null;
   createTrackKind?: "video" | "audio";
   createTrackEdge?: "above" | "below";
+  linkedGhosts?: Array<{
+    trackId: string;
+    clipId: string;
+    startMs: number;
+    durationMs: number;
+  }>;
 } | null;
 
 type SourceRangeDropPayload = {
@@ -55,6 +61,13 @@ type SourceRangeDropPayload = {
   outMs: number;
   durationMs: number;
   hasAudio: boolean;
+};
+
+type AssetDragPayload = {
+  assetId: string;
+  kind?: "video" | "audio" | "image";
+  durationMs?: number;
+  hasAudio?: boolean;
 };
 
 type TimelinePanelProps = {
@@ -90,9 +103,9 @@ type TimelinePanelProps = {
   getClipRenderState: (trackId: string, clip: Clip) => Clip;
   interactionPreview: InteractionPreview;
   onClipPointerDown: (event: React.PointerEvent<HTMLButtonElement>, trackId: string, clip: Clip) => void;
-  onAssetDrop: (assetId: string, trackId: string, startMs: number) => void;
+  onAssetDrop: (assetId: string, trackId: string, startMs: number, durationHintMs?: number) => void;
   onSourceRangeDrop: (payload: SourceRangeDropPayload, trackId: string, startMs: number) => void;
-  onAssetDropToNewTrack: (assetId: string, trackKind: "video" | "audio", startMs: number) => void;
+  onAssetDropToNewTrack: (assetId: string, trackKind: "video" | "audio", startMs: number, durationHintMs?: number) => void;
   onSelectClipKeys: (keys: string[], primary?: { trackId: string; clipId: string } | null) => void;
   onClearSelection: () => void;
   onSplitClip: (trackId: string, clipId: string) => void;
@@ -105,6 +118,7 @@ type TimelinePanelProps = {
   onToggleTrackFlag: (trackId: string, key: "muted" | "locked" | "visible") => void;
   onDropRejected: (message: string) => void;
   assetMap: Map<string, AssetMeta>;
+  activeAssetDrag: AssetDragPayload | null;
 };
 
 type Marquee = {
@@ -120,7 +134,12 @@ function trackDisplayName(track: Track, tracks: Track[]) {
   const base = track.kind === "video" ? "Video" : track.kind === "overlay" ? "Overlay" : "Audio";
   const sameKind = tracks.filter((item) => item.kind === track.kind);
   if (sameKind.length <= 1) return base;
-  const order = sameKind.findIndex((item) => item.id === track.id) + 1;
+
+  const indexInSection = sameKind.findIndex((item) => item.id === track.id);
+  if (indexInSection < 0) return base;
+
+  // NLE convention for visual tracks: V1 is the base track, higher numbers are above it.
+  const order = track.kind === "video" ? sameKind.length - indexInSection : indexInSection + 1;
   return `${base} ${order}`;
 }
 
@@ -158,6 +177,25 @@ function parseSourceRangePayload(raw: string): SourceRangeDropPayload | null {
       outMs,
       durationMs: Math.max(1, durationRaw),
       hasAudio: Boolean(parsed.hasAudio),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseAssetDragPayload(raw: string): AssetDragPayload | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<AssetDragPayload>;
+    if (!parsed || typeof parsed.assetId !== "string" || parsed.assetId.length === 0) return null;
+    return {
+      assetId: parsed.assetId,
+      kind: parsed.kind === "video" || parsed.kind === "audio" || parsed.kind === "image" ? parsed.kind : undefined,
+      durationMs:
+        typeof parsed.durationMs === "number" && Number.isFinite(parsed.durationMs)
+          ? Math.max(0, Math.round(parsed.durationMs))
+          : undefined,
+      hasAudio: typeof parsed.hasAudio === "boolean" ? parsed.hasAudio : undefined,
     };
   } catch {
     return null;
@@ -218,6 +256,7 @@ export function TimelinePanel({
   onToggleTrackFlag,
   onDropRejected,
   assetMap,
+  activeAssetDrag,
 }: TimelinePanelProps) {
   const visibleTracks = useMemo(() => tracks.filter((track) => track.kind !== "overlay"), [tracks]);
   const selected = new Set(selectedClipKeys);
@@ -230,6 +269,7 @@ export function TimelinePanel({
     durationMs: number;
     label: string;
     createTrackKind?: "video" | "audio";
+    showLinkedAudioGhost?: boolean;
   } | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -340,18 +380,23 @@ export function TimelinePanel({
     const rect = event.currentTarget.getBoundingClientRect();
     const scrollLeft = scroller?.scrollLeft ?? 0;
     const scrollTop = scroller?.scrollTop ?? 0;
-    const x = Math.max(0, event.clientX - rect.left + scrollLeft);
-    const y = Math.max(0, event.clientY - rect.top + scrollTop);
-    const laneIndex = Math.floor(y / LANE_HEIGHT);
-    const lane = laneIndex >= 0 && laneIndex < visibleTracks.length ? visibleTracks[laneIndex] : undefined;
+    const rawX = event.clientX - rect.left + scrollLeft;
+    const rawY = event.clientY - rect.top + scrollTop;
+    const x = Math.max(0, rawX);
+    const laneIndex = Math.floor(rawY / LANE_HEIGHT);
+    const lane =
+      rawY >= 0 && rawY < timelineHeight && laneIndex >= 0 && laneIndex < visibleTracks.length
+        ? visibleTracks[laneIndex]
+        : undefined;
     const startMs = Math.round((x / pixelsPerSecond) * 1000);
-    const outOfBounds: "above" | "below" | null = lane == null ? (laneIndex < 0 ? "above" : "below") : null;
+    const outOfBounds: "above" | "below" | null =
+      lane == null ? (rawY < 0 ? "above" : rawY >= timelineHeight ? "below" : null) : null;
     return { lane, startMs, outOfBounds };
   };
 
   const resolveDropCompatibility = (
     sourceRange: SourceRangeDropPayload | null,
-    assetId: string,
+    dragAsset: AssetDragPayload | null,
     lane: Track | undefined,
     outOfBounds: "above" | "below" | null,
   ) => {
@@ -377,16 +422,17 @@ export function TimelinePanel({
       };
     }
 
-    const asset = assetMap.get(assetId);
-    if (!lane && outOfBounds && asset) {
-      if (asset.kind === "video" || asset.kind === "image") {
+    const asset = dragAsset ? assetMap.get(dragAsset.assetId) : undefined;
+    const assetKind = asset?.kind ?? dragAsset?.kind;
+    if (!lane && outOfBounds && assetKind) {
+      if (assetKind === "video" || assetKind === "image") {
         return {
           compatible: true,
           message: "Drop to create a new video track",
           createTrackKind: "video" as const,
         };
       }
-      if (asset.kind === "audio") {
+      if (assetKind === "audio") {
         return {
           compatible: true,
           message: "Drop to create a new audio track",
@@ -406,9 +452,9 @@ export function TimelinePanel({
       };
     }
 
-    const isVideoAsset = asset.kind === "video";
-    const isOverlayAsset = asset.kind === "image";
-    const isAudioAsset = asset.kind === "audio";
+    const isVideoAsset = assetKind === "video";
+    const isOverlayAsset = assetKind === "image";
+    const isAudioAsset = assetKind === "audio";
     const isVideoLane = lane.kind === "video";
     const isAudioLane = lane.kind === "audio";
     const compatible =
@@ -726,30 +772,54 @@ export function TimelinePanel({
             onDragOver={(event) => {
               event.preventDefault();
               const sourceRange = parseSourceRangePayload(event.dataTransfer.getData("text/x-mav-source-range"));
-              const assetId =
+              const fallbackAssetId =
                 event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
+              const dragAsset: AssetDragPayload | null =
+                parseAssetDragPayload(event.dataTransfer.getData("text/x-mav-asset-meta")) ??
+                activeAssetDrag ??
+                (fallbackAssetId ? { assetId: fallbackAssetId } : null);
               const { lane, startMs, outOfBounds } = resolveDropLane(event);
               const { compatible, message, createTrackKind } = resolveDropCompatibility(
                 sourceRange,
-                assetId,
+                dragAsset,
                 lane,
                 outOfBounds,
               );
               event.dataTransfer.dropEffect = compatible ? "copy" : "none";
               setDragOver(true);
               if (lane || createTrackKind) {
-                const asset = sourceRange ? assetMap.get(sourceRange.assetId) : assetMap.get(assetId);
+                const asset = sourceRange
+                  ? assetMap.get(sourceRange.assetId)
+                  : dragAsset
+                    ? assetMap.get(dragAsset.assetId)
+                    : undefined;
+                const fallbackDurationMs =
+                  sourceRange?.durationMs ??
+                  dragAsset?.durationMs ??
+                  asset?.durationMs ??
+                  (asset?.kind === "image" || dragAsset?.kind === "image" ? 3000 : 3000);
+                const showLinkedAudioGhost =
+                  sourceRange != null
+                    ? sourceRange.hasAudio
+                    : (asset?.kind ?? dragAsset?.kind) === "video" &&
+                      (typeof asset?.hasAudio === "boolean" ? asset.hasAudio : dragAsset?.hasAudio) !== false;
                 setDragLane({
                   trackId: lane?.id ?? `new-track-${createTrackKind ?? "video"}`,
                   compatible,
                   message,
                   startMs: Math.max(0, startMs),
-                  durationMs: Math.max(300, Math.round(sourceRange?.durationMs ?? asset?.durationMs ?? 3000)),
+                  durationMs: Math.max(300, Math.round(fallbackDurationMs)),
                   label:
                     sourceRange != null
                       ? `Source: ${asset?.name ?? sourceRange.assetId}`
-                      : asset?.name ?? (asset?.kind === "image" ? "image" : asset?.kind === "audio" ? "audio" : "clip"),
+                      : asset?.name ??
+                        (asset?.kind === "image" || dragAsset?.kind === "image"
+                          ? "image"
+                          : asset?.kind === "audio" || dragAsset?.kind === "audio"
+                            ? "audio"
+                            : "clip"),
                   createTrackKind,
+                  showLinkedAudioGhost,
                 });
               } else {
                 setDragLane(null);
@@ -767,12 +837,16 @@ export function TimelinePanel({
               setDragOver(false);
               setDragLane(null);
               const sourceRange = parseSourceRangePayload(event.dataTransfer.getData("text/x-mav-source-range"));
-              const assetId =
+              const fallbackAssetId =
                 event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
+              const dragAsset: AssetDragPayload | null =
+                parseAssetDragPayload(event.dataTransfer.getData("text/x-mav-asset-meta")) ??
+                activeAssetDrag ??
+                (fallbackAssetId ? { assetId: fallbackAssetId } : null);
               const { lane, startMs, outOfBounds } = resolveDropLane(event);
               const { compatible, message, createTrackKind } = resolveDropCompatibility(
                 sourceRange,
-                assetId,
+                dragAsset,
                 lane,
                 outOfBounds,
               );
@@ -788,13 +862,18 @@ export function TimelinePanel({
                 onSourceRangeDrop(sourceRange, lane.id, startMs);
                 return;
               }
+              const assetId = dragAsset?.assetId ?? "";
               if (!assetId) return;
+              const durationHintMs =
+                typeof dragAsset?.durationMs === "number" && Number.isFinite(dragAsset.durationMs)
+                  ? Math.max(0, Math.round(dragAsset.durationMs))
+                  : undefined;
               if (lane) {
-                onAssetDrop(assetId, lane.id, startMs);
+                onAssetDrop(assetId, lane.id, startMs, durationHintMs);
                 return;
               }
               if (createTrackKind) {
-                onAssetDropToNewTrack(assetId, createTrackKind, startMs);
+                onAssetDropToNewTrack(assetId, createTrackKind, startMs, durationHintMs);
               }
             }}
           >
@@ -925,65 +1004,111 @@ export function TimelinePanel({
             {interactionPreview ? (() => {
               const previewTrackIndex = visibleTracks.findIndex((track) => track.id === interactionPreview.trackId);
               let ghostTop: number | null = null;
-              let ghostLabel: string | null = null;
+              let trackGhostTop: number | null = null;
+              let actionLabel: string | null = null;
+              const hasCreateTrackIntent = Boolean(interactionPreview.createTrackKind && interactionPreview.createTrackEdge);
 
-              if (previewTrackIndex >= 0) {
+              if (hasCreateTrackIntent && interactionPreview.createTrackKind && interactionPreview.createTrackEdge) {
+                trackGhostTop =
+                  interactionPreview.createTrackEdge === "above" ? -LANE_HEIGHT : timelineHeight;
+                ghostTop = trackGhostTop + CLIP_TOP;
+                actionLabel = `+ Add a ${interactionPreview.createTrackKind} track`;
+              } else if (previewTrackIndex >= 0) {
                 ghostTop = previewTrackIndex * LANE_HEIGHT + CLIP_TOP;
-              } else if (interactionPreview.createTrackKind) {
-                if (interactionPreview.createTrackKind === "video") {
-                  if (interactionPreview.createTrackEdge === "above") {
-                    ghostTop = CLIP_TOP;
-                  } else {
-                    const lastVideoIndex = (() => {
-                      for (let index = visibleTracks.length - 1; index >= 0; index -= 1) {
-                        if (visibleTracks[index].kind === "video") return index;
-                      }
-                      return -1;
-                    })();
-                    ghostTop = (lastVideoIndex >= 0 ? lastVideoIndex + 1 : 0) * LANE_HEIGHT + CLIP_TOP;
-                  }
-                } else if (interactionPreview.createTrackEdge === "above") {
-                  const firstAudioIndex = visibleTracks.findIndex((track) => track.kind === "audio");
-                  ghostTop = (firstAudioIndex >= 0 ? firstAudioIndex : Math.max(0, visibleTracks.length - 1)) * LANE_HEIGHT + CLIP_TOP;
-                } else {
-                  ghostTop = Math.max(0, timelineHeight - LANE_HEIGHT + CLIP_TOP);
-                }
-                ghostLabel = `New ${interactionPreview.createTrackKind} track`;
               }
 
               if (ghostTop == null) return null;
               return (
-                <div
-                  className={`clipGhost ${ghostLabel ? "assetGhost" : ""}`}
-                  style={{
-                    left: `${(interactionPreview.startMs / 1000) * pixelsPerSecond}px`,
-                    top: `${ghostTop}px`,
-                    width: `${Math.max(24, (interactionPreview.durationMs / 1000) * pixelsPerSecond)}px`,
-                    height: `${CLIP_HEIGHT}px`,
-                  }}
-                >
-                  {ghostLabel ? <span className="clipGhostLabel">{ghostLabel}</span> : null}
-                </div>
+                <>
+                  {(interactionPreview.linkedGhosts ?? []).map((ghost) => {
+                    const ghostTrackIndex = visibleTracks.findIndex((track) => track.id === ghost.trackId);
+                    if (ghostTrackIndex < 0) return null;
+                    return (
+                      <div
+                        key={`linked-ghost-${ghost.trackId}-${ghost.clipId}`}
+                        className="clipGhost linkedGhost"
+                        style={{
+                          left: `${(ghost.startMs / 1000) * pixelsPerSecond}px`,
+                          top: `${ghostTrackIndex * LANE_HEIGHT + CLIP_TOP}px`,
+                          width: `${Math.max(24, (ghost.durationMs / 1000) * pixelsPerSecond)}px`,
+                          height: `${CLIP_HEIGHT}px`,
+                        }}
+                      />
+                    );
+                  })}
+                  {trackGhostTop != null && actionLabel ? (
+                    <div
+                      className="timelineTrackGhost createTrackPreview"
+                      style={{
+                        top: `${trackGhostTop}px`,
+                        height: `${LANE_HEIGHT}px`,
+                      }}
+                    >
+                      <span className="timelineTrackGhostLabel">{actionLabel}</span>
+                    </div>
+                  ) : null}
+                  <div
+                    className={`clipGhost ${actionLabel ? "assetGhost" : ""}`}
+                    style={{
+                      left: `${(interactionPreview.startMs / 1000) * pixelsPerSecond}px`,
+                      top: `${ghostTop}px`,
+                      width: `${Math.max(24, (interactionPreview.durationMs / 1000) * pixelsPerSecond)}px`,
+                      height: `${CLIP_HEIGHT}px`,
+                    }}
+                  >
+                    {trackGhostTop == null && actionLabel ? <span className="clipGhostLabel">{actionLabel}</span> : null}
+                  </div>
+                </>
               );
             })() : null}
             {dragOver && dragLane && dragLane.compatible ? (
-              <div
-                className="clipGhost assetGhost"
-                style={{
-                  left: `${(dragLane.startMs / 1000) * pixelsPerSecond}px`,
-                  top: `${(
-                    dragLane.createTrackKind === "video"
-                      ? CLIP_TOP
-                      : dragLane.createTrackKind === "audio"
-                        ? Math.max(0, timelineHeight - LANE_HEIGHT + CLIP_TOP)
-                        : visibleTracks.findIndex((track) => track.id === dragLane.trackId) * LANE_HEIGHT + CLIP_TOP
-                  )}px`,
-                  width: `${Math.max(28, (dragLane.durationMs / 1000) * pixelsPerSecond)}px`,
-                  height: `${CLIP_HEIGHT}px`,
-                }}
-              >
-                <span className="clipGhostLabel">{dragLane.label}</span>
-              </div>
+              <>
+                {dragLane.createTrackKind ? (
+                  <div
+                    className="timelineTrackGhost createTrackPreview"
+                    style={{
+                      top: `${dragLane.createTrackKind === "video" ? -LANE_HEIGHT : timelineHeight}px`,
+                      height: `${LANE_HEIGHT}px`,
+                    }}
+                  >
+                    <span className="timelineTrackGhostLabel">{`+ Add a ${dragLane.createTrackKind} track`}</span>
+                  </div>
+                ) : null}
+                <div
+                  className="clipGhost assetGhost"
+                  style={{
+                    left: `${(dragLane.startMs / 1000) * pixelsPerSecond}px`,
+                    top: `${(
+                      dragLane.createTrackKind === "video"
+                        ? -LANE_HEIGHT + CLIP_TOP
+                        : dragLane.createTrackKind === "audio"
+                          ? timelineHeight + CLIP_TOP
+                          : visibleTracks.findIndex((track) => track.id === dragLane.trackId) * LANE_HEIGHT + CLIP_TOP
+                    )}px`,
+                    width: `${Math.max(28, (dragLane.durationMs / 1000) * pixelsPerSecond)}px`,
+                    height: `${CLIP_HEIGHT}px`,
+                  }}
+                >
+                  <span className="clipGhostLabel">{dragLane.label}</span>
+                </div>
+                {dragLane.showLinkedAudioGhost ? (
+                  <div
+                    className="clipGhost linkedGhost"
+                    style={{
+                      left: `${(dragLane.startMs / 1000) * pixelsPerSecond}px`,
+                      top: `${(() => {
+                        const firstAudioLaneIndex = visibleTracks.findIndex((track) => track.kind === "audio");
+                        if (firstAudioLaneIndex >= 0) {
+                          return firstAudioLaneIndex * LANE_HEIGHT + CLIP_TOP;
+                        }
+                        return timelineHeight + CLIP_TOP;
+                      })()}px`,
+                      width: `${Math.max(28, (dragLane.durationMs / 1000) * pixelsPerSecond)}px`,
+                      height: `${CLIP_HEIGHT}px`,
+                    }}
+                  />
+                ) : null}
+              </>
             ) : null}
           </div>
         </div>

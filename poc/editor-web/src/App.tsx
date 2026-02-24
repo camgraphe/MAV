@@ -124,6 +124,20 @@ type DragState = {
   thresholdMs: number;
 };
 
+type AssetDragContext = {
+  assetId: string;
+  kind: "video" | "audio" | "image";
+  durationMs?: number;
+  hasAudio?: boolean;
+};
+
+type InteractionPreviewGhost = {
+  trackId: string;
+  clipId: string;
+  startMs: number;
+  durationMs: number;
+};
+
 type InteractionPreview = {
   trackId: string;
   clipId: string;
@@ -134,6 +148,7 @@ type InteractionPreview = {
   snapGuideMs: number | null;
   createTrackKind?: "video" | "audio";
   createTrackEdge?: "above" | "below";
+  linkedGhosts?: InteractionPreviewGhost[];
 };
 
 type ProgramClipContext = {
@@ -685,34 +700,17 @@ function insertTrackForOutOfBoundsDrag(
   };
 
   if (kind === "audio") {
-    if (edge === "above") {
-      const firstAudioIndex = next.findIndex((track) => track.kind === "audio");
-      const insertIndex = firstAudioIndex >= 0 ? firstAudioIndex : next.length;
-      next.splice(insertIndex, 0, newTrack);
-    } else {
-      next.push(newTrack);
-    }
+    // Keep A1 in place; add new audio tracks below existing audio section.
+    next.push(newTrack);
     return { tracks: next, trackId };
   }
 
+  // Keep V1 in place; add new video tracks above existing video section.
   const firstVideoIndex = next.findIndex((track) => track.kind === "video");
   const firstAudioIndex = next.findIndex((track) => track.kind === "audio");
-  const lastVideoIndex = (() => {
-    for (let index = next.length - 1; index >= 0; index -= 1) {
-      if (next[index].kind === "video") return index;
-    }
-    return -1;
-  })();
-
-  if (edge === "above") {
-    const insertIndex = firstVideoIndex >= 0 ? firstVideoIndex : (firstAudioIndex >= 0 ? firstAudioIndex : next.length);
-    next.splice(insertIndex, 0, newTrack);
-  } else if (lastVideoIndex >= 0) {
-    next.splice(lastVideoIndex + 1, 0, newTrack);
-  } else {
-    const insertIndex = firstAudioIndex >= 0 ? firstAudioIndex : next.length;
-    next.splice(insertIndex, 0, newTrack);
-  }
+  const insertIndex = firstVideoIndex >= 0 ? firstVideoIndex : (firstAudioIndex >= 0 ? firstAudioIndex : next.length);
+  void edge;
+  next.splice(insertIndex, 0, newTrack);
 
   return { tracks: next, trackId };
 }
@@ -852,12 +850,15 @@ function normalizeProject(project: ProjectState): ProjectState {
         : undefined,
   }));
 
-  const durationMs = Math.max(
-    1000,
-    ...tracks.flatMap((track) =>
-      track.clips.map((clip) => clip.startMs + clip.durationMs),
-    ),
-  );
+  const maxClipEndMs = tracks.reduce((maxTrack, track) => {
+    const trackEnd = track.clips.reduce((maxClip, clip) => Math.max(maxClip, clip.startMs + clip.durationMs), 0);
+    return Math.max(maxTrack, trackEnd);
+  }, 0);
+  const requestedDurationMs =
+    typeof project.timeline.durationMs === "number" && Number.isFinite(project.timeline.durationMs)
+      ? Math.max(0, Math.round(project.timeline.durationMs))
+      : 0;
+  const durationMs = Math.max(1000, requestedDurationMs, maxClipEndMs);
 
   return {
     ...project,
@@ -1089,6 +1090,34 @@ function sanitizeClip(clip: Clip): Clip {
   };
 }
 
+function constrainClipToSourceDuration(project: ProjectState, trackId: string, clip: Clip): Clip {
+  const normalized = sanitizeClip(clip);
+  const asset = project.assets.find((entry) => entry.id === normalized.assetId);
+  if (!asset) return normalized;
+  if (asset.kind === "image") return normalized;
+  if (typeof asset.durationMs !== "number" || !Number.isFinite(asset.durationMs) || asset.durationMs <= 0) {
+    return normalized;
+  }
+
+  const sourceDurationMs = Math.max(1, Math.round(asset.durationMs));
+  const track = project.timeline.tracks.find((entry) => entry.id === trackId);
+  const role = normalized.mediaRole ?? (track ? toMediaRole(track.kind) : "video");
+  if (role !== "video" && role !== "audio") return normalized;
+
+  const minDurationMs = Math.min(MIN_CLIP_DURATION_MS, sourceDurationMs);
+  const maxInMs = Math.max(0, sourceDurationMs - minDurationMs);
+  const inMs = clamp(Math.round(normalized.inMs), 0, maxInMs);
+  const maxDurationMs = Math.max(minDurationMs, sourceDurationMs - inMs);
+  const durationMs = clamp(Math.round(normalized.durationMs), minDurationMs, maxDurationMs);
+
+  return {
+    ...normalized,
+    inMs,
+    durationMs,
+    outMs: inMs + durationMs,
+  };
+}
+
 function applyNoOverlap(track: Track, clipId: string, nextClip: Clip): Track {
   const others = sortClips(track.clips.filter((clip) => clip.id !== clipId));
   const normalized = sanitizeClip(nextClip);
@@ -1240,6 +1269,44 @@ function expandClipRefsWithLinks(project: ProjectState, refs: ClipRef[]): ClipRe
   return uniqClipRefs(expanded);
 }
 
+function resolveLinkedOperationDelta(
+  mode: InteractionMode,
+  linkedClips: ClipWithRef[],
+  requestedStartDelta: number,
+  requestedDurationDelta: number,
+  requestedInDelta: number,
+): { startDelta: number; durationDelta: number; inDelta: number } {
+  let startDelta = requestedStartDelta;
+  let durationDelta = requestedDurationDelta;
+  let inDelta = requestedInDelta;
+
+  if (mode === "move") {
+    const minStart = linkedClips.reduce((min, entry) => Math.min(min, entry.clip.startMs), Number.POSITIVE_INFINITY);
+    startDelta = Math.max(-minStart, requestedStartDelta);
+    durationDelta = 0;
+    inDelta = 0;
+  } else if (mode === "resize-start") {
+    const minDelta = linkedClips.reduce((max, entry) => Math.max(max, -entry.clip.startMs), Number.NEGATIVE_INFINITY);
+    const maxDelta = linkedClips.reduce(
+      (min, entry) => Math.min(min, entry.clip.durationMs - MIN_CLIP_DURATION_MS),
+      Number.POSITIVE_INFINITY,
+    );
+    startDelta = clamp(requestedStartDelta, minDelta, maxDelta);
+    durationDelta = -startDelta;
+    inDelta = startDelta;
+  } else if (mode === "resize-end") {
+    const minDurationDelta = linkedClips.reduce(
+      (max, entry) => Math.max(max, MIN_CLIP_DURATION_MS - entry.clip.durationMs),
+      Number.NEGATIVE_INFINITY,
+    );
+    durationDelta = Math.max(minDurationDelta, requestedDurationDelta);
+    startDelta = 0;
+    inDelta = 0;
+  }
+
+  return { startDelta, durationDelta, inDelta };
+}
+
 function applyClipUpdatesAtomically(
   project: ProjectState,
   updates: Array<{
@@ -1262,7 +1329,8 @@ function applyClipUpdatesAtomically(
     if (!track || track.locked) return null;
     if (!track.clips.some((clip) => clip.id === update.clipId)) return null;
 
-    const constrained = applyCollisionPolicy(track, update.clipId, update.nextClip, mode);
+    const sourceConstrained = constrainClipToSourceDuration(project, update.trackId, update.nextClip);
+    const constrained = applyCollisionPolicy(track, update.clipId, sourceConstrained, mode);
     if (!constrained.clips.some((clip) => clip.id === update.clipId)) return null;
     tracks[trackIndex] = constrained;
   }
@@ -1381,6 +1449,7 @@ export default function App() {
   const [sourceVideoUrl, setSourceVideoUrl] = useState<string | null>(null);
   const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
   const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
+  const [activeAssetDrag, setActiveAssetDrag] = useState<AssetDragContext | null>(null);
   const [videoDurationMs, setVideoDurationMs] = useState<number>(0);
   const [sourcePlayheadMs, setSourcePlayheadMs] = useState<number>(0);
   const [sourceDurationMs, setSourceDurationMs] = useState<number>(0);
@@ -1593,6 +1662,10 @@ export default function App() {
           `${layer.trackId}:${layer.clipId}:${layer.visual.x}:${layer.visual.y}:${layer.visual.scalePct}:${layer.visual.rotationDeg}:${layer.visual.opacityPct}:${layer.visual.fitMode}`,
       )
       .join("|");
+  }, [project, playheadMs]);
+  const hasProgramVideoAtPlayhead = useMemo(() => {
+    const stack = findProgramStackAtMs(project, playheadMs);
+    return stack.some((layer) => layer.role === "video");
   }, [project, playheadMs]);
   const selectedClipRole = useMemo(() => {
     if (!selectedClip || !selectedTrack) return null;
@@ -1840,17 +1913,22 @@ export default function App() {
     clientX: number,
     clientY: number,
   ): { track: Track | null; outOfBounds: "above" | "below" | null } => {
+    const workspace = document.querySelector<HTMLElement>(".timelineWorkspace");
+    if (!workspace) return { track: null, outOfBounds: null };
+    const workspaceRect = workspace.getBoundingClientRect();
+    if (clientX < workspaceRect.left || clientX > workspaceRect.right) return { track: null, outOfBounds: null };
+
+    const laneCanvas = document.querySelector<HTMLElement>(".timelineCanvas.timelineLanes");
+    if (!laneCanvas) return { track: null, outOfBounds: null };
+    const laneRect = laneCanvas.getBoundingClientRect();
+    const edgeTolerance = 8;
+    if (clientY <= laneRect.top + edgeTolerance) return { track: null, outOfBounds: "above" };
+    if (clientY >= laneRect.bottom - edgeTolerance) return { track: null, outOfBounds: "below" };
+
     const track = resolveTimelineTrackAtPointer(clientX, clientY);
     if (track) {
       return { track, outOfBounds: null };
     }
-
-    const laneCanvas = document.querySelector<HTMLElement>(".timelineCanvas.timelineLanes");
-    if (!laneCanvas) return { track: null, outOfBounds: null };
-    const rect = laneCanvas.getBoundingClientRect();
-    if (clientX < rect.left || clientX > rect.right) return { track: null, outOfBounds: null };
-    if (clientY < rect.top) return { track: null, outOfBounds: "above" };
-    if (clientY > rect.bottom) return { track: null, outOfBounds: "below" };
     return { track: null, outOfBounds: null };
   };
 
@@ -1949,17 +2027,21 @@ export default function App() {
         previewTrackId = hoveredTrack.id;
       } else if (!hoveredTrack && dropTarget.outOfBounds) {
         createTrackKind = drag.clipRole === "audio" ? "audio" : "video";
-        createTrackEdge = dropTarget.outOfBounds;
+        createTrackEdge = createTrackKind === "audio" ? "below" : "above";
       }
     }
 
-    const candidateClip = {
+    const candidateClip = constrainClipToSourceDuration(project, previewTrackId, {
       ...original,
       startMs,
       durationMs,
       inMs,
       outMs,
-    };
+    });
+    startMs = candidateClip.startMs;
+    durationMs = candidateClip.durationMs;
+    inMs = candidateClip.inMs;
+    outMs = candidateClip.outMs;
 
     const track = project.timeline.tracks.find((item) => item.id === previewTrackId);
     if (track) {
@@ -1975,16 +2057,57 @@ export default function App() {
       }
     }
 
+    const requestedStartDelta = startMs - original.startMs;
+    const requestedDurationDelta = durationMs - original.durationMs;
+    const requestedInDelta = inMs - original.inMs;
+    const linkedDelta = resolveLinkedOperationDelta(
+      drag.mode,
+      drag.linkedClips,
+      requestedStartDelta,
+      requestedDurationDelta,
+      requestedInDelta,
+    );
+    const previewStartMs = Math.max(0, Math.round(original.startMs + linkedDelta.startDelta));
+    const previewDurationMs = Math.max(
+      MIN_CLIP_DURATION_MS,
+      Math.round(original.durationMs + linkedDelta.durationDelta),
+    );
+    const previewInMs = Math.max(0, Math.round(original.inMs + linkedDelta.inDelta));
+    const previewOutMs = previewInMs + previewDurationMs;
+    const linkedGhosts: InteractionPreviewGhost[] = drag.linkedClips
+      .filter((entry) => !(entry.trackId === drag.trackId && entry.clipId === drag.clipId))
+      .map((entry) => {
+        const ghostInMs = Math.max(0, Math.round(entry.clip.inMs + linkedDelta.inDelta));
+        const ghostDurationMs = Math.max(
+          MIN_CLIP_DURATION_MS,
+          Math.round(entry.clip.durationMs + linkedDelta.durationDelta),
+        );
+        const constrainedGhost = constrainClipToSourceDuration(project, entry.trackId, {
+          ...entry.clip,
+          startMs: Math.max(0, Math.round(entry.clip.startMs + linkedDelta.startDelta)),
+          durationMs: ghostDurationMs,
+          inMs: ghostInMs,
+          outMs: ghostInMs + ghostDurationMs,
+        });
+        return {
+          trackId: entry.trackId,
+          clipId: entry.clipId,
+          startMs: constrainedGhost.startMs,
+          durationMs: constrainedGhost.durationMs,
+        };
+      });
+
     const nextPreview: InteractionPreview = {
       trackId: previewTrackId,
       clipId: drag.clipId,
-      startMs,
-      durationMs,
-      inMs,
-      outMs,
+      startMs: previewStartMs,
+      durationMs: previewDurationMs,
+      inMs: previewInMs,
+      outMs: previewOutMs,
       snapGuideMs: guide,
       createTrackKind,
       createTrackEdge,
+      linkedGhosts,
     };
 
     interactionPreviewRef.current = nextPreview;
@@ -2037,34 +2160,13 @@ export default function App() {
         const requestedStartDelta = preview.startMs - drag.original.startMs;
         const requestedDurationDelta = preview.durationMs - drag.original.durationMs;
         const requestedInDelta = preview.inMs - drag.original.inMs;
-
-        let startDelta = requestedStartDelta;
-        let durationDelta = requestedDurationDelta;
-        let inDelta = requestedInDelta;
-
-        if (drag.mode === "move") {
-          const minStart = drag.linkedClips.reduce((min, entry) => Math.min(min, entry.clip.startMs), Number.POSITIVE_INFINITY);
-          startDelta = Math.max(-minStart, requestedStartDelta);
-          durationDelta = 0;
-          inDelta = 0;
-        } else if (drag.mode === "resize-start") {
-          const minDelta = drag.linkedClips.reduce((max, entry) => Math.max(max, -entry.clip.startMs), Number.NEGATIVE_INFINITY);
-          const maxDelta = drag.linkedClips.reduce(
-            (min, entry) => Math.min(min, entry.clip.durationMs - MIN_CLIP_DURATION_MS),
-            Number.POSITIVE_INFINITY,
-          );
-          startDelta = clamp(requestedStartDelta, minDelta, maxDelta);
-          durationDelta = -startDelta;
-          inDelta = startDelta;
-        } else if (drag.mode === "resize-end") {
-          const minDurationDelta = drag.linkedClips.reduce(
-            (max, entry) => Math.max(max, MIN_CLIP_DURATION_MS - entry.clip.durationMs),
-            Number.NEGATIVE_INFINITY,
-          );
-          durationDelta = Math.max(minDurationDelta, requestedDurationDelta);
-          startDelta = 0;
-          inDelta = 0;
-        }
+        const { startDelta, durationDelta, inDelta } = resolveLinkedOperationDelta(
+          drag.mode,
+          drag.linkedClips,
+          requestedStartDelta,
+          requestedDurationDelta,
+          requestedInDelta,
+        );
 
         const updates = drag.linkedClips.map((entry) => {
           const original = entry.clip;
@@ -2111,7 +2213,8 @@ export default function App() {
             if (!isRoleCompatibleWithTrack(drag.clipRole, targetTrack.kind)) return prev;
             const movedUpdate = updates.find((item) => item.trackId === drag.trackId && item.clipId === drag.clipId);
             if (!movedUpdate) return prev;
-            const moved = moveClipBetweenTracks(tracks, drag.trackId, destinationTrackId, movedUpdate.nextClip, collisionMode);
+            const movedClip = constrainClipToSourceDuration(prev, destinationTrackId, movedUpdate.nextClip);
+            const moved = moveClipBetweenTracks(tracks, drag.trackId, destinationTrackId, movedClip, collisionMode);
             if (!moved) return prev;
             tracks = moved;
             moveCommitted = true;
@@ -2224,6 +2327,14 @@ export default function App() {
 
     setSelection({ trackId, clipId: clip.id });
     setSelectedClipKeys([key]);
+    const linkedGhosts: InteractionPreviewGhost[] = linkedClips
+      .filter((entry) => !(entry.trackId === trackId && entry.clipId === clip.id))
+      .map((entry) => ({
+        trackId: entry.trackId,
+        clipId: entry.clipId,
+        startMs: entry.clip.startMs,
+        durationMs: entry.clip.durationMs,
+      }));
     const nextPreview: InteractionPreview = {
       trackId,
       clipId: clip.id,
@@ -2232,6 +2343,7 @@ export default function App() {
       inMs: clip.inMs,
       outMs: clip.outMs,
       snapGuideMs: null,
+      linkedGhosts,
     };
     interactionPreviewRef.current = nextPreview;
     setInteractionPreview(nextPreview);
@@ -2244,6 +2356,16 @@ export default function App() {
   useEffect(() => {
     interactionPreviewRef.current = interactionPreview;
   }, [interactionPreview]);
+
+  useEffect(() => {
+    const clearAssetDrag = () => setActiveAssetDrag(null);
+    window.addEventListener("dragend", clearAssetDrag);
+    window.addEventListener("drop", clearAssetDrag);
+    return () => {
+      window.removeEventListener("dragend", clearAssetDrag);
+      window.removeEventListener("drop", clearAssetDrag);
+    };
+  }, []);
 
   const updateSelectedClip = (updater: (clip: Clip) => Clip) => {
     if (!selection) return;
@@ -2747,7 +2869,25 @@ export default function App() {
     setLog(`Track added: ${kind}.`);
   };
 
-  const addAssetToNewTrack = (assetId: string, trackKind: "video" | "audio", startMs: number) => {
+  const resolveAssetDropDurationMs = (
+    asset: Asset,
+    durationHintMs?: number,
+  ) => {
+    if (typeof durationHintMs === "number" && Number.isFinite(durationHintMs) && durationHintMs > 0) {
+      return Math.max(MIN_CLIP_DURATION_MS, Math.round(durationHintMs));
+    }
+    if (typeof asset.durationMs === "number" && Number.isFinite(asset.durationMs) && asset.durationMs > 0) {
+      return Math.max(MIN_CLIP_DURATION_MS, Math.round(asset.durationMs));
+    }
+    return Math.max(MIN_CLIP_DURATION_MS, asset.kind === "image" ? 3000 : 3000);
+  };
+
+  const addAssetToNewTrack = (
+    assetId: string,
+    trackKind: "video" | "audio",
+    startMs: number,
+    durationHintMs?: number,
+  ) => {
     const asset = project.assets.find((item) => item.id === assetId);
     if (!asset) {
       setLog("Asset not found.");
@@ -2780,10 +2920,7 @@ export default function App() {
       if (trackIndex < 0) return prev;
       const targetTrack = { ...tracks[trackIndex], clips: [...tracks[trackIndex].clips] };
       const nextStartMs = Math.max(0, Math.round(startMs));
-      const durationMs = Math.max(
-        MIN_CLIP_DURATION_MS,
-        Math.round(asset.durationMs ?? (asset.kind === "image" ? 3000 : videoDurationMs ?? 3000)),
-      );
+      const durationMs = resolveAssetDropDurationMs(asset, durationHintMs);
       const clipId = `clip-${crypto.randomUUID().slice(0, 8)}`;
       const shouldCreateLinkedAudio = asset.kind === "video" && asset.hasAudio !== false;
       const linkGroupId = shouldCreateLinkedAudio ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined;
@@ -3912,6 +4049,8 @@ export default function App() {
     clearPreviewCanvas(canvas);
     const stack = findProgramStackAtMs(projectRef.current, atMs);
     if (stack.length === 0) return;
+    const hasVideoLayer = stack.some((layer) => layer.role === "video");
+    if (!hasVideoLayer) return;
     const projectWidth = Math.max(1, projectRef.current.meta.width);
     const projectHeight = Math.max(1, projectRef.current.meta.height);
 
@@ -4209,6 +4348,7 @@ export default function App() {
           switching = false;
           if (!switched) {
             setPlayheadMs(activeContext.clipEndMs);
+            drawProgramComposite(null, null, activeContext.clipEndMs);
             setIsPlaying(false);
             return;
           }
@@ -4691,6 +4831,14 @@ export default function App() {
     if (loadedDecoderAssetIdRef.current !== programAssetId) return;
     queuePreviewSeek(programLocalPlayheadUs);
   }, [decoderMode, isPlaying, programAssetId, programLocalPlayheadUs, programVisualSignature, programStackVisualSignature]);
+
+  useEffect(() => {
+    if (isPlaying) return;
+    if (hasProgramVideoAtPlayhead) return;
+    const canvas = programCanvasRef.current;
+    if (!canvas) return;
+    clearPreviewCanvas(canvas);
+  }, [hasProgramVideoAtPlayhead, isPlaying, playheadMs]);
 
   useEffect(() => {
     const useFallbackPreview = decoderMode !== "webcodecs";
@@ -5189,7 +5337,12 @@ export default function App() {
     setExportValidationMessage(null);
   }
 
-  const addAssetToTimeline = (assetId: string, preferredTrackId?: string, preferredStartMs?: number) => {
+  const addAssetToTimeline = (
+    assetId: string,
+    preferredTrackId?: string,
+    preferredStartMs?: number,
+    durationHintMs?: number,
+  ) => {
     const asset = project.assets.find((item) => item.id === assetId && (item.kind === "video" || item.kind === "image"));
     if (!asset) {
       setLog("Asset not found.");
@@ -5232,10 +5385,7 @@ export default function App() {
         typeof preferredStartMs === "number" && Number.isFinite(preferredStartMs)
           ? Math.max(0, Math.round(preferredStartMs))
           : visualTrack.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
-      const durationMs = Math.max(
-        MIN_CLIP_DURATION_MS,
-        Math.round((asset.durationMs ?? (asset.kind === "image" ? 3000 : videoDurationMs ?? 3000))),
-      );
+      const durationMs = resolveAssetDropDurationMs(asset, durationHintMs);
       const clipId = `clip-${crypto.randomUUID().slice(0, 8)}`;
       const shouldCreateLinkedAudio = asset.kind === "video" && asset.hasAudio !== false;
       const linkGroupId = shouldCreateLinkedAudio ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined;
@@ -5574,9 +5724,13 @@ export default function App() {
                   })();
                 }}
                 onAddToTimeline={(assetId) => addAssetToTimeline(assetId)}
-                onAssetDragStart={(assetId) => {
-                  const asset = project.assets.find((item) => item.id === assetId);
-                  setLog(`Drag asset to timeline: ${asset?.name ?? assetId}`);
+                onAssetDragStart={(payload) => {
+                  setActiveAssetDrag(payload);
+                  const asset = project.assets.find((item) => item.id === payload.assetId);
+                  setLog(`Drag asset to timeline: ${asset?.name ?? payload.assetId}`);
+                }}
+                onAssetDragEnd={() => {
+                  setActiveAssetDrag(null);
                 }}
               />
             )}
@@ -5683,8 +5837,8 @@ export default function App() {
             getClipRenderState={getClipRenderState}
             interactionPreview={interactionPreview}
             onClipPointerDown={onClipPointerDown}
-            onAssetDrop={(assetId, trackId, startMs) => {
-              addAssetToTimeline(assetId, trackId, startMs);
+            onAssetDrop={(assetId, trackId, startMs, durationHintMs) => {
+              addAssetToTimeline(assetId, trackId, startMs, durationHintMs);
             }}
             onSourceRangeDrop={(payload, trackId, startMs) => {
               insertSourceRangeToTimeline({
@@ -5696,8 +5850,8 @@ export default function App() {
                 outMs: payload.outMs,
               });
             }}
-            onAssetDropToNewTrack={(assetId, trackKind, startMs) => {
-              addAssetToNewTrack(assetId, trackKind, startMs);
+            onAssetDropToNewTrack={(assetId, trackKind, startMs, durationHintMs) => {
+              addAssetToNewTrack(assetId, trackKind, startMs, durationHintMs);
             }}
             onSelectClipKeys={setSelectionFromKeys}
             onClearSelection={() => setSelectionFromKeys([])}
@@ -5711,6 +5865,7 @@ export default function App() {
             onToggleTrackFlag={toggleTrackFlag}
             onDropRejected={setLog}
             assetMap={timelineAssetMap}
+            activeAssetDrag={activeAssetDrag}
           />
         )}
         diagnostics={

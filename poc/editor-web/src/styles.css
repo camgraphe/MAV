@@ -1445,6 +1445,13 @@ select {
   background: linear-gradient(180deg, rgba(102, 184, 240, 0.3), rgba(56, 116, 170, 0.24));
 }
 
+.clipGhost.linkedGhost {
+  border-style: dashed;
+  border-color: rgba(124, 199, 255, 0.75);
+  background: linear-gradient(180deg, rgba(96, 170, 228, 0.26), rgba(44, 92, 136, 0.18));
+  z-index: 7;
+}
+
 .clipGhostLabel {
   display: inline-block;
   margin: 16px 8px 0;
@@ -1460,6 +1467,46 @@ select {
   background: rgba(94, 167, 230, 0.16);
   pointer-events: none;
   z-index: 9;
+}
+
+.timelineTrackGhost {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border: 1px dashed rgba(124, 199, 255, 0.75);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(51, 103, 154, 0.24), rgba(30, 63, 98, 0.16));
+  box-shadow: inset 0 0 0 1px rgba(184, 226, 255, 0.14);
+  pointer-events: none;
+  z-index: 7;
+}
+
+.timelineTrackGhost.createTrackPreview {
+  border-color: rgba(120, 214, 255, 0.95);
+  background: linear-gradient(180deg, rgba(43, 131, 187, 0.34), rgba(26, 83, 129, 0.28));
+  box-shadow:
+    inset 0 0 0 1px rgba(184, 236, 255, 0.26),
+    0 0 0 1px rgba(72, 171, 227, 0.22);
+}
+
+.timelineTrackGhostLabel {
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  color: #dff2ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: rgba(13, 27, 42, 0.75);
+  border: 1px solid rgba(124, 199, 255, 0.45);
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.timelineTrackGhost.createTrackPreview .timelineTrackGhostLabel {
+  color: #f3fbff;
+  border-color: rgba(128, 216, 255, 0.8);
+  background: rgba(11, 28, 44, 0.92);
 }
 
 .clipContextMenu {

@@ -40,9 +40,27 @@ type ProjectAsset = {
 
 type ProjectClipPlan = {
   assetId: string;
+  startMs: number;
   inMs: number;
   durationMs: number;
 };
+
+type ProjectRenderPlan = {
+  clips: ProjectClipPlan[];
+  durationMs: number;
+};
+
+type RenderSegmentPlan =
+  | {
+      kind: "gap";
+      durationMs: number;
+    }
+  | {
+      kind: "clip";
+      assetId: string;
+      inMs: number;
+      durationMs: number;
+    };
 
 type RenderJob = {
   id: string;
@@ -195,9 +213,10 @@ function extractProjectAssets(projectJson: unknown): ProjectAsset[] {
   return result;
 }
 
-function extractPrimaryClip(projectJson: unknown): ProjectClipPlan {
+function extractPrimaryVideoPlan(projectJson: unknown): ProjectRenderPlan {
   const root = toObject(projectJson);
   const timeline = toObject(root?.timeline);
+  const timelineDurationMs = Math.max(0, Math.round(toNumber(timeline?.durationMs, 0)));
   const tracks = Array.isArray(timeline?.tracks) ? timeline?.tracks : [];
   const videoTrack = tracks.find((entry) => {
     const track = toObject(entry);
@@ -220,28 +239,77 @@ function extractPrimaryClip(projectJson: unknown): ProjectClipPlan {
       const durationMs = toNumber(clip.durationMs);
       const outMs = toNumber(clip.outMs, inMs + durationMs);
       if (!assetId || durationMs <= 0) return null;
+      const boundedDuration = Math.max(100, Math.min(durationMs, Math.max(100, outMs - inMs)));
       return {
         assetId,
-        startMs,
-        inMs,
-        durationMs,
-        outMs,
+        startMs: Math.max(0, Math.round(startMs)),
+        inMs: Math.max(0, Math.round(inMs)),
+        durationMs: boundedDuration,
       };
     })
-    .filter((entry): entry is { assetId: string; startMs: number; inMs: number; durationMs: number; outMs: number } => Boolean(entry))
-    .sort((a, b) => a.startMs - b.startMs);
+    .filter((entry): entry is ProjectClipPlan => Boolean(entry))
+    .sort((a, b) => a.startMs - b.startMs || a.assetId.localeCompare(b.assetId));
 
-  const first = parsed[0];
-  if (!first) {
+  if (parsed.length === 0) {
     throw new Error("Unable to derive primary clip for export.");
   }
 
-  const boundedDuration = Math.max(100, Math.min(first.durationMs, Math.max(100, first.outMs - first.inMs)));
+  const maxClipEndMs = parsed.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
+  const durationMs = Math.max(100, timelineDurationMs, maxClipEndMs);
+
   return {
-    assetId: first.assetId,
-    inMs: Math.max(0, first.inMs),
-    durationMs: boundedDuration,
+    clips: parsed,
+    durationMs,
   };
+}
+
+function buildRenderSegments(plan: ProjectRenderPlan): RenderSegmentPlan[] {
+  const segments: RenderSegmentPlan[] = [];
+  let cursorMs = 0;
+
+  for (const clip of plan.clips) {
+    const clipStartMs = Math.max(0, Math.round(clip.startMs));
+    const clipDurationMs = Math.max(100, Math.round(clip.durationMs));
+    const clipEndMs = clipStartMs + clipDurationMs;
+    if (clipEndMs <= cursorMs) continue;
+
+    const effectiveStartMs = Math.max(cursorMs, clipStartMs);
+    if (effectiveStartMs > cursorMs) {
+      segments.push({
+        kind: "gap",
+        durationMs: effectiveStartMs - cursorMs,
+      });
+      cursorMs = effectiveStartMs;
+    }
+
+    const shiftMs = effectiveStartMs - clipStartMs;
+    const effectiveDurationMs = clipEndMs - effectiveStartMs;
+    if (effectiveDurationMs <= 0) continue;
+
+    segments.push({
+      kind: "clip",
+      assetId: clip.assetId,
+      inMs: Math.max(0, Math.round(clip.inMs + shiftMs)),
+      durationMs: Math.max(100, Math.round(effectiveDurationMs)),
+    });
+    cursorMs = effectiveStartMs + effectiveDurationMs;
+  }
+
+  if (plan.durationMs > cursorMs) {
+    segments.push({
+      kind: "gap",
+      durationMs: Math.max(100, plan.durationMs - cursorMs),
+    });
+  }
+
+  if (segments.length === 0) {
+    segments.push({
+      kind: "gap",
+      durationMs: Math.max(100, plan.durationMs),
+    });
+  }
+
+  return segments;
 }
 
 async function ensureDir(dirPath: string) {
@@ -336,71 +404,16 @@ function isJobCanceled(job: RenderJob) {
   return job.status === "canceled";
 }
 
-async function runFfmpegJob(job: RenderJob, inputPath: string, outputPath: string, clip: ProjectClipPlan) {
-  const { width, height } = ffmpegPresetSize(job.renderOptions.preset);
-  const fps = job.renderOptions.fps;
-  const startSeconds = (clip.inMs / 1000).toFixed(3);
-  const durationSeconds = (clip.durationMs / 1000).toFixed(3);
-
-  const args = [
-    "-y",
-    "-ss",
-    startSeconds,
-    "-t",
-    durationSeconds,
-    "-i",
-    inputPath,
-    "-vf",
-    `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
-    "-r",
-    String(fps),
-    "-c:v",
-    "mpeg4",
-    "-q:v",
-    "3",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "128k",
-    "-movflags",
-    "+faststart",
-    "-progress",
-    "pipe:1",
-    "-nostats",
-    outputPath,
-  ];
-
+async function runFfmpegCommand(job: RenderJob, args: string[], label: string) {
   const child = spawn(FFMPEG_BIN, args, {
     stdio: ["ignore", "pipe", "pipe"],
   });
   job.process = child;
-
-  const expectedDurationMs = Math.max(100, clip.durationMs);
   let stderrTail = "";
 
   child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => {
-    const lines = chunk.split(/\r?\n/);
-    for (const line of lines) {
-      if (!line) continue;
-      if (line.startsWith("out_time_us=")) {
-        const us = Number(line.slice("out_time_us=".length));
-        if (Number.isFinite(us)) {
-          job.progress = clamp(Math.round((us / 1000 / expectedDurationMs) * 100), 0, 99);
-          job.updatedAt = nowIso();
-        }
-      } else if (line.startsWith("out_time_ms=")) {
-        const raw = Number(line.slice("out_time_ms=".length));
-        if (Number.isFinite(raw)) {
-          const ms = raw > expectedDurationMs * 10 ? raw / 1000 : raw;
-          job.progress = clamp(Math.round((ms / expectedDurationMs) * 100), 0, 99);
-          job.updatedAt = nowIso();
-        }
-      } else if (line === "progress=end") {
-        job.progress = 100;
-        job.updatedAt = nowIso();
-      }
-    }
+  child.stdout.on("data", () => {
+    // Progress for timeline render is tracked per segment in runFfmpegTimelineJob.
   });
 
   child.stderr.setEncoding("utf8");
@@ -419,15 +432,150 @@ async function runFfmpegJob(job: RenderJob, inputPath: string, outputPath: strin
   });
 
   job.process = undefined;
-
-  if (isJobCanceled(job)) {
-    return;
-  }
-
+  if (isJobCanceled(job)) return;
   if (exitCode !== 0) {
     const compact = stderrTail.trim().split(/\r?\n/).slice(-8).join(" | ");
-    throw new Error(`FFmpeg failed (exit=${exitCode}): ${compact || "no stderr"}`);
+    throw new Error(`${label} failed (exit=${exitCode}): ${compact || "no stderr"}`);
   }
+}
+
+async function runFfmpegTimelineJob(
+  job: RenderJob,
+  resolvedAssets: Map<string, string>,
+  outputPath: string,
+  plan: ProjectRenderPlan,
+) {
+  const { width, height } = ffmpegPresetSize(job.renderOptions.preset);
+  const fps = job.renderOptions.fps;
+  const segments = buildRenderSegments(plan);
+  const tempDir = job.tempDir ?? TMP_ROOT;
+  const segmentDir = path.join(tempDir, "segments");
+  await ensureDir(segmentDir);
+
+  const totalSteps = Math.max(1, segments.length + 2);
+  const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`;
+  const segmentPaths: string[] = [];
+
+  for (let index = 0; index < segments.length; index += 1) {
+    if (isJobCanceled(job)) return;
+    const segment = segments[index];
+    const outputSegmentPath = path.join(segmentDir, `${String(index).padStart(4, "0")}.mp4`);
+    segmentPaths.push(outputSegmentPath);
+    const durationSeconds = (Math.max(1, segment.durationMs) / 1000).toFixed(3);
+
+    if (segment.kind === "gap") {
+      await runFfmpegCommand(
+        job,
+        [
+          "-y",
+          "-f",
+          "lavfi",
+          "-i",
+          `color=c=black:s=${width}x${height}:r=${fps}:d=${durationSeconds}`,
+          "-an",
+          "-c:v",
+          "mpeg4",
+          "-q:v",
+          "3",
+          "-pix_fmt",
+          "yuv420p",
+          outputSegmentPath,
+        ],
+        `FFmpeg black segment ${index + 1}/${segments.length}`,
+      );
+    } else {
+      const inputPath = resolvedAssets.get(segment.assetId);
+      if (!inputPath) {
+        throw new Error(`No local or downloadable source found for asset ${segment.assetId}.`);
+      }
+      await runFfmpegCommand(
+        job,
+        [
+          "-y",
+          "-ss",
+          (segment.inMs / 1000).toFixed(3),
+          "-t",
+          durationSeconds,
+          "-i",
+          inputPath,
+          "-vf",
+          scaleFilter,
+          "-r",
+          String(fps),
+          "-an",
+          "-c:v",
+          "mpeg4",
+          "-q:v",
+          "3",
+          "-pix_fmt",
+          "yuv420p",
+          outputSegmentPath,
+        ],
+        `FFmpeg clip segment ${index + 1}/${segments.length}`,
+      );
+    }
+
+    job.progress = clamp(Math.round(((index + 1) / totalSteps) * 95), 1, 95);
+    job.updatedAt = nowIso();
+  }
+
+  if (isJobCanceled(job)) return;
+
+  const concatListPath = path.join(segmentDir, "concat.txt");
+  const concatContent = segmentPaths
+    .map((segmentPath) => `file '${segmentPath.replace(/'/g, "'\\''")}'`)
+    .join("\n");
+  await fs.writeFile(concatListPath, `${concatContent}\n`, "utf8");
+
+  const videoOnlyPath = path.join(segmentDir, "timeline-video-only.mp4");
+  await runFfmpegCommand(
+    job,
+    [
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      concatListPath,
+      "-c",
+      "copy",
+      videoOnlyPath,
+    ],
+    "FFmpeg concat timeline segments",
+  );
+  job.progress = clamp(Math.round(((segments.length + 1) / totalSteps) * 95), 1, 95);
+  job.updatedAt = nowIso();
+
+  if (isJobCanceled(job)) return;
+
+  await runFfmpegCommand(
+    job,
+    [
+      "-y",
+      "-i",
+      videoOnlyPath,
+      "-f",
+      "lavfi",
+      "-t",
+      (plan.durationMs / 1000).toFixed(3),
+      "-i",
+      "anullsrc=channel_layout=stereo:sample_rate=48000",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      outputPath,
+    ],
+    "FFmpeg final mux",
+  );
+  job.progress = 99;
+  job.updatedAt = nowIso();
 }
 
 async function cleanupJobTemp(job: RenderJob) {
@@ -449,14 +597,10 @@ async function executeJob(jobId: string) {
   try {
     await ensureDir(TMP_ROOT);
     const resolvedAssets = await materializeAssets(job);
-    const clip = extractPrimaryClip(job.request.projectJson);
-    const inputPath = resolvedAssets.get(clip.assetId);
-    if (!inputPath) {
-      throw new Error(`No local or downloadable source found for asset ${clip.assetId}.`);
-    }
+    const plan = extractPrimaryVideoPlan(job.request.projectJson);
 
     const outputPath = path.join(TMP_ROOT, `${job.id}.mp4`);
-    await runFfmpegJob(job, inputPath, outputPath, clip);
+    await runFfmpegTimelineJob(job, resolvedAssets, outputPath, plan);
 
     if (isJobCanceled(job)) {
       return;

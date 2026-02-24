@@ -22,7 +22,13 @@ type MediaBinPanelProps = {
   onActivateAsset: (assetId: string) => void;
   onOpenInSourceMonitor?: (assetId: string) => void;
   onAddToTimeline: (assetId: string) => void;
-  onAssetDragStart?: (assetId: string) => void;
+  onAssetDragStart?: (payload: {
+    assetId: string;
+    kind: "video" | "audio" | "image";
+    durationMs?: number;
+    hasAudio?: boolean;
+  }) => void;
+  onAssetDragEnd?: () => void;
 };
 
 function formatDuration(ms?: number) {
@@ -58,6 +64,7 @@ export function MediaBinPanel({
   onOpenInSourceMonitor,
   onAddToTimeline,
   onAssetDragStart,
+  onAssetDragEnd,
 }: MediaBinPanelProps) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -128,10 +135,23 @@ export function MediaBinPanel({
               draggable
               onDoubleClick={() => onOpenInSourceMonitor?.(asset.id)}
               onDragStart={(event) => {
+                const dragPayload = {
+                  assetId: asset.id,
+                  kind: asset.kind,
+                  durationMs:
+                    typeof asset.durationMs === "number" && Number.isFinite(asset.durationMs)
+                      ? Math.max(0, Math.round(asset.durationMs))
+                      : undefined,
+                  hasAudio: asset.kind === "video" ? asset.hasAudio !== false : false,
+                };
                 event.dataTransfer.setData("text/x-mav-asset-id", asset.id);
+                event.dataTransfer.setData("text/x-mav-asset-meta", JSON.stringify(dragPayload));
                 event.dataTransfer.setData("text/plain", asset.id);
                 event.dataTransfer.effectAllowed = "copy";
-                onAssetDragStart?.(asset.id);
+                onAssetDragStart?.(dragPayload);
+              }}
+              onDragEnd={() => {
+                onAssetDragEnd?.();
               }}
             >
               {viewMode === "grid" ? (
