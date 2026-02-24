@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-23T14:12:55.206Z",
+  "generatedAt": "2026-02-24T09:26:55.079Z",
   "appUrl": "http://127.0.0.1:4174",
   "scenarioCount": 50,
   "thresholds": {
@@ -19,7 +19,7 @@
       "profile": "baseline-short-gop",
       "mediaFilename": "qa_h264_baseline_short_gop_aac.mp4",
       "mediaPath": "poc/editor-web/.qa-media/qa_h264_baseline_short_gop_aac.mp4",
-      "runAt": "2026-02-23T14:12:50.053Z",
+      "runAt": "2026-02-24T09:26:49.797Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -29,15 +29,15 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T14:12:50.047Z",
+        "runAt": "2026-02-24T09:26:49.792Z",
         "profile": "baseline-short-gop",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 7.612244899783816,
-        "seek_success_pct": 98,
+        "time_to_first_frame_ms": 7.899999999403954,
+        "seek_success_pct": 100,
         "decode_errors": 0,
-        "stale_results": 1,
+        "stale_results": 0,
         "drift_within_1frame_pct": 100,
-        "avg_drift_ms": 9.266551020408162,
+        "avg_drift_ms": 9.08122,
         "max_drift_ms": 20.653
       },
       "diagnostics": {
@@ -51,12 +51,12 @@
         },
         "lastSeekResult": {
           "type": "seekResult",
-          "requestId": 63,
+          "requestId": 62,
           "targetUs": 473630,
           "timestampUs": 458333,
           "status": "ok",
           "fromCache": false,
-          "decodeMs": 3.800000011920929,
+          "decodeMs": 3.5999999940395355,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": 0,
           "reason": "qa"
@@ -82,7 +82,7 @@
       "profile": "main-long-gop",
       "mediaFilename": "qa_h264_main_long_gop_aac.mp4",
       "mediaPath": "poc/editor-web/.qa-media/qa_h264_main_long_gop_aac.mp4",
-      "runAt": "2026-02-23T14:12:52.146Z",
+      "runAt": "2026-02-24T09:26:51.936Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -92,15 +92,15 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T14:12:52.142Z",
+        "runAt": "2026-02-24T09:26:51.933Z",
         "profile": "main-long-gop",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 28.818367348033554,
-        "seek_success_pct": 98,
+        "time_to_first_frame_ms": 29.19000000298023,
+        "seek_success_pct": 100,
         "decode_errors": 0,
-        "stale_results": 1,
-        "drift_within_1frame_pct": 95.91836734693877,
-        "avg_drift_ms": 11.211653061224489,
+        "stale_results": 0,
+        "drift_within_1frame_pct": 96,
+        "avg_drift_ms": 11.070759999999998,
         "max_drift_ms": 83.333
       },
       "diagnostics": {
@@ -114,7 +114,7 @@
         },
         "lastSeekResult": {
           "type": "seekResult",
-          "requestId": 63,
+          "requestId": 62,
           "targetUs": 2851277,
           "timestampUs": 2833333,
           "status": "ok",
@@ -145,7 +145,7 @@
       "profile": "high-long-gop",
       "mediaFilename": "qa_h264_high_long_gop_aac.mp4",
       "mediaPath": "poc/editor-web/.qa-media/qa_h264_high_long_gop_aac.mp4",
-      "runAt": "2026-02-23T14:12:54.220Z",
+      "runAt": "2026-02-24T09:26:54.072Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -155,15 +155,15 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T14:12:54.217Z",
+        "runAt": "2026-02-24T09:26:54.069Z",
         "profile": "high-long-gop",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 28.45510203984319,
-        "seek_success_pct": 98,
+        "time_to_first_frame_ms": 29.103999999165534,
+        "seek_success_pct": 100,
         "decode_errors": 0,
-        "stale_results": 1,
-        "drift_within_1frame_pct": 95.91836734693877,
-        "avg_drift_ms": 10.493122448979593,
+        "stale_results": 0,
+        "drift_within_1frame_pct": 96,
+        "avg_drift_ms": 10.3666,
         "max_drift_ms": 83.333
       },
       "diagnostics": {
@@ -177,12 +177,12 @@
         },
         "lastSeekResult": {
           "type": "seekResult",
-          "requestId": 63,
+          "requestId": 62,
           "targetUs": 5627226,
           "timestampUs": 5625000,
           "status": "ok",
           "fromCache": false,
-          "decodeMs": 14.199999988079071,
+          "decodeMs": 14.099999994039536,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": 5083333,
           "reason": "qa"
@@ -208,7 +208,7 @@
       "profile": "no-audio",
       "mediaFilename": "chromium_bear_silent.mp4",
       "mediaPath": "poc/editor-web/.qa-media/chromium_bear_silent.mp4",
-      "runAt": "2026-02-23T14:12:54.970Z",
+      "runAt": "2026-02-24T09:26:54.836Z",
       "status": "ok",
       "pass": true,
       "thresholds": {
@@ -218,10 +218,10 @@
       },
       "reasons": [],
       "metric": {
-        "runAt": "2026-02-23T14:12:54.966Z",
+        "runAt": "2026-02-24T09:26:54.833Z",
         "profile": "no-audio",
         "totalScenarios": 50,
-        "time_to_first_frame_ms": 1.6760000002384186,
+        "time_to_first_frame_ms": 1.7439999997615814,
         "seek_success_pct": 100,
         "decode_errors": 0,
         "stale_results": 0,
@@ -240,12 +240,12 @@
         },
         "lastSeekResult": {
           "type": "seekResult",
-          "requestId": 63,
+          "requestId": 62,
           "targetUs": 375683,
           "timestampUs": 367033,
           "status": "ok",
           "fromCache": true,
-          "decodeMs": 0.09999999403953552,
+          "decodeMs": 0,
           "skippedToIdrSamples": 0,
           "keyframeStartUs": null,
           "reason": "qa"
@@ -271,7 +271,7 @@
       "profile": "fmp4",
       "mediaFilename": "chromium_bear_640x360_av_frag_fmp4.mp4",
       "mediaPath": "poc/editor-web/.qa-media/chromium_bear_640x360_av_frag_fmp4.mp4",
-      "runAt": "2026-02-23T14:12:55.205Z",
+      "runAt": "2026-02-24T09:26:55.077Z",
       "status": "skipped-fmp4-fallback-policy",
       "pass": true,
       "thresholds": {
