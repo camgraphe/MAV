@@ -834,6 +834,7 @@ export function TimelinePanel({
             }}
             onDrop={(event) => {
               event.preventDefault();
+              const dropPreview = dragLane;
               setDragOver(false);
               setDragLane(null);
               const sourceRange = parseSourceRangePayload(event.dataTransfer.getData("text/x-mav-source-range"));
@@ -864,10 +865,15 @@ export function TimelinePanel({
               }
               const assetId = dragAsset?.assetId ?? "";
               if (!assetId) return;
-              const durationHintMs =
-                typeof dragAsset?.durationMs === "number" && Number.isFinite(dragAsset.durationMs)
-                  ? Math.max(0, Math.round(dragAsset.durationMs))
-                  : undefined;
+              const durationHintMs = (() => {
+                if (dropPreview && dropPreview.compatible) {
+                  return Math.max(0, Math.round(dropPreview.durationMs));
+                }
+                if (typeof dragAsset?.durationMs === "number" && Number.isFinite(dragAsset.durationMs)) {
+                  return Math.max(0, Math.round(dragAsset.durationMs));
+                }
+                return undefined;
+              })();
               if (lane) {
                 onAssetDrop(assetId, lane.id, startMs, durationHintMs);
                 return;
