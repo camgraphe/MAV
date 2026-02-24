@@ -45,7 +45,17 @@ type InteractionPreview = {
   inMs: number;
   outMs: number;
   snapGuideMs: number | null;
+  createTrackKind?: "video" | "audio";
+  createTrackEdge?: "above" | "below";
 } | null;
+
+type SourceRangeDropPayload = {
+  assetId: string;
+  inMs: number;
+  outMs: number;
+  durationMs: number;
+  hasAudio: boolean;
+};
 
 type TimelinePanelProps = {
   tracks: Track[];
@@ -81,6 +91,7 @@ type TimelinePanelProps = {
   interactionPreview: InteractionPreview;
   onClipPointerDown: (event: React.PointerEvent<HTMLButtonElement>, trackId: string, clip: Clip) => void;
   onAssetDrop: (assetId: string, trackId: string, startMs: number) => void;
+  onSourceRangeDrop: (payload: SourceRangeDropPayload, trackId: string, startMs: number) => void;
   onAssetDropToNewTrack: (assetId: string, trackKind: "video" | "audio", startMs: number) => void;
   onSelectClipKeys: (keys: string[], primary?: { trackId: string; clipId: string } | null) => void;
   onClearSelection: () => void;
@@ -129,6 +140,30 @@ function formatRulerTime(ms: number) {
   return `${minutes}:${seconds}`;
 }
 
+function parseSourceRangePayload(raw: string): SourceRangeDropPayload | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<SourceRangeDropPayload>;
+    if (!parsed || typeof parsed.assetId !== "string" || parsed.assetId.length === 0) return null;
+    const inMs = typeof parsed.inMs === "number" && Number.isFinite(parsed.inMs) ? Math.max(0, Math.round(parsed.inMs)) : 0;
+    const outMs =
+      typeof parsed.outMs === "number" && Number.isFinite(parsed.outMs)
+        ? Math.max(inMs, Math.round(parsed.outMs))
+        : inMs;
+    const durationRaw =
+      typeof parsed.durationMs === "number" && Number.isFinite(parsed.durationMs) ? Math.round(parsed.durationMs) : outMs - inMs;
+    return {
+      assetId: parsed.assetId,
+      inMs,
+      outMs,
+      durationMs: Math.max(1, durationRaw),
+      hasAudio: Boolean(parsed.hasAudio),
+    };
+  } catch {
+    return null;
+  }
+}
+
 const TRACK_LABEL_WIDTH = 156;
 const RULER_HEIGHT = 28;
 const LANE_HEIGHT = 64;
@@ -169,6 +204,7 @@ export function TimelinePanel({
   interactionPreview,
   onClipPointerDown,
   onAssetDrop,
+  onSourceRangeDrop,
   onAssetDropToNewTrack,
   onSelectClipKeys,
   onClearSelection,
@@ -314,10 +350,33 @@ export function TimelinePanel({
   };
 
   const resolveDropCompatibility = (
+    sourceRange: SourceRangeDropPayload | null,
     assetId: string,
     lane: Track | undefined,
     outOfBounds: "above" | "below" | null,
   ) => {
+    if (sourceRange) {
+      if (!lane) {
+        return {
+          compatible: false,
+          message: "Drop source range on a video track.",
+          createTrackKind: undefined,
+        };
+      }
+      if (lane.kind !== "video") {
+        return {
+          compatible: false,
+          message: "Source range can only be dropped on video tracks.",
+          createTrackKind: undefined,
+        };
+      }
+      return {
+        compatible: true,
+        message: `Insert source range on ${trackDisplayName(lane, visibleTracks)}`,
+        createTrackKind: undefined,
+      };
+    }
+
     const asset = assetMap.get(assetId);
     if (!lane && outOfBounds && asset) {
       if (asset.kind === "video" || asset.kind === "image") {
@@ -666,21 +725,30 @@ export function TimelinePanel({
             }}
             onDragOver={(event) => {
               event.preventDefault();
+              const sourceRange = parseSourceRangePayload(event.dataTransfer.getData("text/x-mav-source-range"));
               const assetId =
                 event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
               const { lane, startMs, outOfBounds } = resolveDropLane(event);
-              const { compatible, message, createTrackKind } = resolveDropCompatibility(assetId, lane, outOfBounds);
+              const { compatible, message, createTrackKind } = resolveDropCompatibility(
+                sourceRange,
+                assetId,
+                lane,
+                outOfBounds,
+              );
               event.dataTransfer.dropEffect = compatible ? "copy" : "none";
               setDragOver(true);
               if (lane || createTrackKind) {
-                const asset = assetMap.get(assetId);
+                const asset = sourceRange ? assetMap.get(sourceRange.assetId) : assetMap.get(assetId);
                 setDragLane({
                   trackId: lane?.id ?? `new-track-${createTrackKind ?? "video"}`,
                   compatible,
                   message,
                   startMs: Math.max(0, startMs),
-                  durationMs: Math.max(300, Math.round(asset?.durationMs ?? 3000)),
-                  label: asset?.name ?? (asset?.kind === "image" ? "image" : asset?.kind === "audio" ? "audio" : "clip"),
+                  durationMs: Math.max(300, Math.round(sourceRange?.durationMs ?? asset?.durationMs ?? 3000)),
+                  label:
+                    sourceRange != null
+                      ? `Source: ${asset?.name ?? sourceRange.assetId}`
+                      : asset?.name ?? (asset?.kind === "image" ? "image" : asset?.kind === "audio" ? "audio" : "clip"),
                   createTrackKind,
                 });
               } else {
@@ -698,15 +766,29 @@ export function TimelinePanel({
               event.preventDefault();
               setDragOver(false);
               setDragLane(null);
+              const sourceRange = parseSourceRangePayload(event.dataTransfer.getData("text/x-mav-source-range"));
               const assetId =
                 event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
-              if (!assetId) return;
               const { lane, startMs, outOfBounds } = resolveDropLane(event);
-              const { compatible, message, createTrackKind } = resolveDropCompatibility(assetId, lane, outOfBounds);
+              const { compatible, message, createTrackKind } = resolveDropCompatibility(
+                sourceRange,
+                assetId,
+                lane,
+                outOfBounds,
+              );
               if (!compatible) {
                 onDropRejected(`Drop rejected: ${message}`);
                 return;
               }
+              if (sourceRange) {
+                if (!lane || lane.kind !== "video") {
+                  onDropRejected("Drop rejected: source ranges can only be dropped on video tracks.");
+                  return;
+                }
+                onSourceRangeDrop(sourceRange, lane.id, startMs);
+                return;
+              }
+              if (!assetId) return;
               if (lane) {
                 onAssetDrop(assetId, lane.id, startMs);
                 return;
@@ -840,17 +922,50 @@ export function TimelinePanel({
                 }}
               />
             ) : null}
-            {interactionPreview && visibleTracks.some((track) => track.id === interactionPreview.trackId) ? (
-              <div
-                className="clipGhost"
-                style={{
-                  left: `${(interactionPreview.startMs / 1000) * pixelsPerSecond}px`,
-                  top: `${visibleTracks.findIndex((track) => track.id === interactionPreview.trackId) * LANE_HEIGHT + CLIP_TOP}px`,
-                  width: `${Math.max(24, (interactionPreview.durationMs / 1000) * pixelsPerSecond)}px`,
-                  height: `${CLIP_HEIGHT}px`,
-                }}
-              />
-            ) : null}
+            {interactionPreview ? (() => {
+              const previewTrackIndex = visibleTracks.findIndex((track) => track.id === interactionPreview.trackId);
+              let ghostTop: number | null = null;
+              let ghostLabel: string | null = null;
+
+              if (previewTrackIndex >= 0) {
+                ghostTop = previewTrackIndex * LANE_HEIGHT + CLIP_TOP;
+              } else if (interactionPreview.createTrackKind) {
+                if (interactionPreview.createTrackKind === "video") {
+                  if (interactionPreview.createTrackEdge === "above") {
+                    ghostTop = CLIP_TOP;
+                  } else {
+                    const lastVideoIndex = (() => {
+                      for (let index = visibleTracks.length - 1; index >= 0; index -= 1) {
+                        if (visibleTracks[index].kind === "video") return index;
+                      }
+                      return -1;
+                    })();
+                    ghostTop = (lastVideoIndex >= 0 ? lastVideoIndex + 1 : 0) * LANE_HEIGHT + CLIP_TOP;
+                  }
+                } else if (interactionPreview.createTrackEdge === "above") {
+                  const firstAudioIndex = visibleTracks.findIndex((track) => track.kind === "audio");
+                  ghostTop = (firstAudioIndex >= 0 ? firstAudioIndex : Math.max(0, visibleTracks.length - 1)) * LANE_HEIGHT + CLIP_TOP;
+                } else {
+                  ghostTop = Math.max(0, timelineHeight - LANE_HEIGHT + CLIP_TOP);
+                }
+                ghostLabel = `New ${interactionPreview.createTrackKind} track`;
+              }
+
+              if (ghostTop == null) return null;
+              return (
+                <div
+                  className={`clipGhost ${ghostLabel ? "assetGhost" : ""}`}
+                  style={{
+                    left: `${(interactionPreview.startMs / 1000) * pixelsPerSecond}px`,
+                    top: `${ghostTop}px`,
+                    width: `${Math.max(24, (interactionPreview.durationMs / 1000) * pixelsPerSecond)}px`,
+                    height: `${CLIP_HEIGHT}px`,
+                  }}
+                >
+                  {ghostLabel ? <span className="clipGhostLabel">{ghostLabel}</span> : null}
+                </div>
+              );
+            })() : null}
             {dragOver && dragLane && dragLane.compatible ? (
               <div
                 className="clipGhost assetGhost"

@@ -7,6 +7,7 @@ type TopToolbarProps = {
   onExport: () => void;
   onSave: () => void;
   onLoad: () => void;
+  onResetLayout: () => void;
   onOpenAbout: () => void;
   canShowDiagnostics: boolean;
   diagnosticsVisible: boolean;
@@ -22,6 +23,7 @@ export function TopToolbar({
   onExport,
   onSave,
   onLoad,
+  onResetLayout,
   onOpenAbout,
   canShowDiagnostics,
   diagnosticsVisible,
@@ -81,6 +83,9 @@ export function TopToolbar({
             🧪
           </button>
         ) : null}
+        <button type="button" className="iconBtn" aria-label="Reset layout" title="Reset layout" onClick={onResetLayout}>
+          ⊞
+        </button>
         <button type="button" className="iconBtn" aria-label="About MAV" title="About MAV" onClick={onOpenAbout}>
           ⓘ
         </button>

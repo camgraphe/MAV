@@ -20,6 +20,7 @@ type MediaBinPanelProps = {
   activeAssetId: string | null;
   onUpload: (file: File | null) => void;
   onActivateAsset: (assetId: string) => void;
+  onOpenInSourceMonitor?: (assetId: string) => void;
   onAddToTimeline: (assetId: string) => void;
   onAssetDragStart?: (assetId: string) => void;
 };
@@ -54,12 +55,13 @@ export function MediaBinPanel({
   activeAssetId,
   onUpload,
   onActivateAsset,
+  onOpenInSourceMonitor,
   onAddToTimeline,
   onAssetDragStart,
 }: MediaBinPanelProps) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const videoAssets = assets.filter((asset) => asset.kind === "video");
+  const visualAssets = assets.filter((asset) => asset.kind === "video" || asset.kind === "image");
 
   const openPicker = () => inputRef.current?.click();
 
@@ -102,29 +104,29 @@ export function MediaBinPanel({
         id="decode-input-file"
         className="mediaUploadInput"
         type="file"
-        accept="video/mp4,video/*"
+        accept="video/mp4,video/*,image/*"
         onChange={(event) => onUpload(event.target.files?.[0] ?? null)}
       />
 
       <div className={`assetList ${viewMode === "grid" ? "gridMode" : "listMode"}`}>
-        {videoAssets.length === 0 ? (
+        {visualAssets.length === 0 ? (
           <div className="assetEmptyState">
             <p className="hint">Use + to import media, then drag clips to the timeline.</p>
           </div>
         ) : null}
 
-        {videoAssets.map((asset) => {
+        {visualAssets.map((asset) => {
           const active = asset.id === activeAssetId;
           const realThumbnails = (asset.thumbnails ?? []).filter((thumb) => !isSyntheticThumbnail(thumb));
           const heroThumbIndex = realThumbnails.length > 1 ? 1 : 0;
           const previewThumb = asset.heroThumbnail ?? realThumbnails[heroThumbIndex] ?? null;
-          const thumbStrip = realThumbnails.filter((_, index) => index !== heroThumbIndex).slice(0, 10);
 
           return (
             <article
               key={asset.id}
               className={`assetCard ${active ? "active" : ""}`}
               draggable
+              onDoubleClick={() => onOpenInSourceMonitor?.(asset.id)}
               onDragStart={(event) => {
                 event.dataTransfer.setData("text/x-mav-asset-id", asset.id);
                 event.dataTransfer.setData("text/plain", asset.id);
@@ -138,7 +140,11 @@ export function MediaBinPanel({
                     {previewThumb ? (
                       <img src={previewThumb} alt="" loading="lazy" />
                     ) : (
-                      <video className="assetPreviewVideoThumb" src={asset.url} muted playsInline preload="metadata" />
+                      asset.kind === "image" ? (
+                        <img src={asset.url} alt="" loading="lazy" />
+                      ) : (
+                        <video className="assetPreviewVideoThumb" src={asset.url} muted playsInline preload="metadata" />
+                      )
                     )}
                     <div className="assetPreviewMeta">
                       <span>{formatDuration(asset.durationMs)}</span>
@@ -166,13 +172,6 @@ export function MediaBinPanel({
                   <div className="assetMeta">
                     <strong title={asset.name}>{compactName(asset.name, asset.id)}</strong>
                   </div>
-                  {thumbStrip.length > 1 ? (
-                    <div className="assetStrip">
-                      {thumbStrip.map((thumb, index) => (
-                        <img key={`${asset.id}-${index}`} src={thumb} alt="" loading="lazy" />
-                      ))}
-                    </div>
-                  ) : null}
                 </>
               ) : (
                 <>
@@ -180,7 +179,11 @@ export function MediaBinPanel({
                     {previewThumb ? (
                       <img src={previewThumb} alt="" loading="lazy" />
                     ) : (
-                      <video className="assetThumbVideo" src={asset.url} muted playsInline preload="metadata" />
+                      asset.kind === "image" ? (
+                        <img src={asset.url} alt="" loading="lazy" />
+                      ) : (
+                        <video className="assetThumbVideo" src={asset.url} muted playsInline preload="metadata" />
+                      )
                     )}
                   </div>
                   <div className="assetMeta listMeta">
@@ -209,13 +212,6 @@ export function MediaBinPanel({
                   </div>
                 </>
               )}
-              {viewMode === "list" && asset.waveform && asset.waveform.length > 0 ? (
-                <div className="assetWaveform" aria-hidden>
-                  {asset.waveform.slice(0, 48).map((value, index) => (
-                    <span key={`${asset.id}-wf-${index}`} style={{ height: `${Math.max(7, value * 22)}px` }} />
-                  ))}
-                </div>
-              ) : null}
             </article>
           );
         })}

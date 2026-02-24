@@ -28,13 +28,17 @@ body {
 }
 
 .editorShell {
+  --pane-left: 280px;
+  --pane-right: 320px;
+  --pane-bottom: minmax(200px, 34vh);
   height: 100vh;
   min-height: 100vh;
   padding: 0;
   display: grid;
+  position: relative;
   gap: 0;
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) minmax(260px, 340px);
-  grid-template-rows: auto minmax(0, 1fr) minmax(200px, 34vh) auto auto;
+  grid-template-columns: var(--pane-left) minmax(0, 1fr) var(--pane-right);
+  grid-template-rows: auto minmax(0, 1fr) var(--pane-bottom) auto auto;
   grid-template-areas:
     "top top top"
     "left center right"
@@ -69,6 +73,7 @@ body {
   border-left: 0;
   border-bottom: 0;
   overflow: auto;
+  position: relative;
 }
 
 .editorCenter {
@@ -85,6 +90,7 @@ body {
   border-bottom: 0;
   border-left: 0;
   overflow: auto;
+  position: relative;
 }
 
 .editorBottom {
@@ -93,6 +99,7 @@ body {
   border-right: 0;
   overflow: hidden;
   display: flex;
+  position: relative;
   background: var(--editor-surface);
   border-color: var(--editor-border);
   color: var(--editor-text);
@@ -125,7 +132,68 @@ body {
   resize: none;
   overflow: auto;
   min-width: 220px;
-  max-width: 440px;
+  max-width: none;
+}
+
+.shellSplitter {
+  position: absolute;
+  z-index: 30;
+  border: 0;
+  background: transparent;
+  margin: 0;
+  padding: 0;
+  touch-action: none;
+}
+
+.shellSplitter::before {
+  content: "";
+  position: absolute;
+  background: #324961;
+  transition: background 120ms ease;
+}
+
+.shellSplitter:hover::before,
+.shellSplitter.isDragging::before {
+  background: #4cb0ff;
+}
+
+.shellSplitterLeft,
+.shellSplitterRight {
+  width: 10px;
+  top: 0;
+  bottom: 0;
+  cursor: col-resize;
+}
+
+.shellSplitterLeft {
+  right: -5px;
+}
+
+.shellSplitterRight {
+  left: -5px;
+}
+
+.shellSplitterLeft::before,
+.shellSplitterRight::before {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  left: 4px;
+}
+
+.shellSplitterBottom {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  cursor: row-resize;
+}
+
+.shellSplitterBottom::before {
+  left: 0;
+  right: 0;
+  height: 2px;
+  top: 4px;
 }
 
 h1,
@@ -693,13 +761,27 @@ select {
 
 .previewMonitors {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
 }
 
+.previewMonitors.withSource {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(180px, 0.72fr);
+}
+
 .previewMonitors.programOnly {
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.programMonitorCard {
+  grid-row: 1;
+}
+
+.sourceMonitorCard {
+  grid-row: 2;
 }
 
 .monitorCard {
@@ -713,6 +795,38 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.monitorHeaderTabs {
+  justify-content: flex-start;
+}
+
+.monitorModeSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.monitorTabBtn {
+  border: 0;
+  background: transparent;
+  color: #9fb3cd;
+  border-radius: 0;
+  padding: 1px 0 3px;
+  min-width: 70px;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.monitorTabBtn:hover {
+  color: #d9e9ff;
+}
+
+.monitorTabBtn.active {
+  color: #e8f3ff;
+  box-shadow: inset 0 -2px 0 #4cb0ff;
 }
 
 .monitorHeader h3 {
@@ -748,6 +862,23 @@ select {
   color: #e6f0fe;
 }
 
+.sourceRangeMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #9fb5d0;
+  letter-spacing: 0.01em;
+}
+
+.sourceEditActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .playerControls {
   display: grid;
   gap: 8px;
@@ -772,6 +903,58 @@ select {
 
 .playerScrubRow input[type="range"] {
   width: 100%;
+}
+
+.sourceScrubRow {
+  gap: 8px;
+}
+
+.sourceRangeTrack {
+  position: relative;
+  width: 100%;
+  cursor: grab;
+}
+
+.sourceRangeTrack:active {
+  cursor: grabbing;
+}
+
+.sourceRangeOverlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sourceRangeWindow {
+  position: absolute;
+  top: 50%;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(76, 176, 255, 0.45);
+  box-shadow: 0 0 0 1px rgba(76, 176, 255, 0.4);
+}
+
+.sourceRangeMarker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #eaf4ff;
+  background: #1b5f9f;
+  box-shadow: 0 0 0 1px rgba(24, 142, 236, 0.55);
+}
+
+.sourceRangeMarker.out {
+  background: #2a7b4c;
+  box-shadow: 0 0 0 1px rgba(58, 183, 114, 0.55);
 }
 
 .playerButtons button:nth-child(2) {
@@ -1485,6 +1668,10 @@ pre {
       "bottom"
       "diag"
       "status";
+  }
+
+  .shellSplitter {
+    display: none;
   }
 
   .resizablePane {

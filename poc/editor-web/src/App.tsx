@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import projectSchema from "../contracts/project.schema.v1.json";
 import type {
   DecodeWorkerInMessage,
@@ -112,8 +113,11 @@ type DragState = {
   mode: InteractionMode;
   trackId: string;
   clipId: string;
+  clipRole: ClipMediaRole;
   startClientX: number;
+  startClientY: number;
   latestClientX: number;
+  latestClientY: number;
   original: Clip;
   linkedClips: ClipWithRef[];
   snapTargetsMs: number[];
@@ -128,6 +132,8 @@ type InteractionPreview = {
   inMs: number;
   outMs: number;
   snapGuideMs: number | null;
+  createTrackKind?: "video" | "audio";
+  createTrackEdge?: "above" | "below";
 };
 
 type ProgramClipContext = {
@@ -300,6 +306,27 @@ type AssetAnalysisCacheValue = {
   hasAudio?: boolean;
 };
 
+type EditorLayout = {
+  leftPx: number;
+  rightPx: number;
+  bottomPx: number;
+  sourceSplitPct: number;
+};
+
+type StoredEditorLayoutV1 = {
+  v: 1;
+  leftPx: number;
+  rightPx: number;
+  bottomPx: number;
+  sourceSplitPct: number;
+};
+
+type SourceRangeState = {
+  inMs: number | null;
+  outMs: number | null;
+  lastPlayheadMs: number;
+};
+
 declare global {
   interface Window {
     __MAV_DECODE_QA__?: DecodeQaApi;
@@ -309,12 +336,22 @@ declare global {
 const STORAGE_KEY = "mav.poc.editor.state.v2";
 const ANALYSIS_CACHE_KEY = "mav.poc.editor.analysis-cache.v1";
 const EXPORT_SESSION_KEY = "mav.poc.editor.export-session.v1";
+const EDITOR_LAYOUT_STORAGE_KEY = "mav.editor.layout.v1";
+const SOURCE_RANGE_STORAGE_KEY = "mav.source.ranges.v1";
 const MIN_CLIP_DURATION_MS = 100;
 const DEFAULT_QA_SCENARIOS = 50;
 const HISTORY_LIMIT = 80;
 const PLAYBACK_TICK_LIMIT_MS = 50;
 const ANALYSIS_CACHE_LIMIT = 24;
 const EXPORT_HISTORY_LIMIT = 8;
+const DESKTOP_LAYOUT_BREAKPOINT = 1100;
+const LEFT_PANEL_MIN_PX = 220;
+const LEFT_PANEL_MAX_PX = 760;
+const RIGHT_PANEL_MIN_PX = 260;
+const RIGHT_PANEL_MAX_PX = 760;
+const TIMELINE_MIN_PX = 180;
+const SOURCE_SPLIT_MIN_PCT = 28;
+const SOURCE_SPLIT_MAX_PCT = 55;
 
 function toUs(ms: number): number {
   return Math.round(ms * 1000);
@@ -326,6 +363,216 @@ function fromUs(us: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function clampSourcePoint(value: number | null, durationMs: number): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return clamp(Math.round(value), 0, Math.max(0, Math.round(durationMs)));
+}
+
+function normalizeSourceRangePoints(
+  inMs: number | null,
+  outMs: number | null,
+  durationMs: number,
+): { inMs: number | null; outMs: number | null } {
+  let nextIn = clampSourcePoint(inMs, durationMs);
+  let nextOut = clampSourcePoint(outMs, durationMs);
+  if (nextIn != null && nextOut != null && nextIn > nextOut) {
+    const swap = nextIn;
+    nextIn = nextOut;
+    nextOut = swap;
+  }
+  return { inMs: nextIn, outMs: nextOut };
+}
+
+function resolveSourceWindow(range: SourceRangeState | undefined, durationMs: number): {
+  inMs: number;
+  outMs: number;
+  durationMs: number;
+  points: { inMs: number | null; outMs: number | null };
+} {
+  const safeDuration = Math.max(1, Math.round(durationMs));
+  const points = normalizeSourceRangePoints(range?.inMs ?? null, range?.outMs ?? null, safeDuration);
+  let startMs = 0;
+  let endMs = safeDuration;
+  if (points.inMs != null && points.outMs != null) {
+    startMs = points.inMs;
+    endMs = points.outMs;
+  } else if (points.inMs != null) {
+    startMs = points.inMs;
+  } else if (points.outMs != null) {
+    endMs = points.outMs;
+  }
+
+  if (endMs < startMs) {
+    const swap = startMs;
+    startMs = endMs;
+    endMs = swap;
+  }
+
+  if (endMs <= startMs) {
+    if (safeDuration >= MIN_CLIP_DURATION_MS) {
+      startMs = clamp(startMs, 0, Math.max(0, safeDuration - MIN_CLIP_DURATION_MS));
+      endMs = clamp(startMs + MIN_CLIP_DURATION_MS, 0, safeDuration);
+    } else {
+      startMs = 0;
+      endMs = safeDuration;
+    }
+  }
+
+  return {
+    inMs: startMs,
+    outMs: endMs,
+    durationMs: Math.max(1, endMs - startMs),
+    points,
+  };
+}
+
+function cloneClipWithWindow(clip: Clip, startMs: number, endMs: number): Clip | null {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  const durationMs = Math.round(endMs - startMs);
+  if (durationMs < MIN_CLIP_DURATION_MS) return null;
+  const offsetInMs = Math.round(startMs - clip.startMs);
+  const inMs = Math.round(clip.inMs + offsetInMs);
+  return sanitizeClip({
+    ...clip,
+    startMs: Math.round(startMs),
+    durationMs,
+    inMs,
+    outMs: inMs + durationMs,
+  });
+}
+
+function applyInsertGap(track: Track, insertAtMs: number, gapMs: number): Track {
+  if (gapMs <= 0) return track;
+  const insertAt = Math.max(0, Math.round(insertAtMs));
+  const gap = Math.max(0, Math.round(gapMs));
+  const nextClips: Clip[] = [];
+
+  for (const source of sortClips(track.clips)) {
+    const clip = sanitizeClip(source);
+    const clipStart = clip.startMs;
+    const clipEnd = clip.startMs + clip.durationMs;
+    if (clipEnd <= insertAt) {
+      nextClips.push(clip);
+      continue;
+    }
+    if (clipStart >= insertAt) {
+      nextClips.push(
+        sanitizeClip({
+          ...clip,
+          startMs: clip.startMs + gap,
+        }),
+      );
+      continue;
+    }
+
+    const left = cloneClipWithWindow(clip, clipStart, insertAt);
+    const right = cloneClipWithWindow(clip, insertAt, clipEnd);
+    if (left) nextClips.push(left);
+    if (right) {
+      nextClips.push(
+        sanitizeClip({
+          ...right,
+          id: `clip-${crypto.randomUUID().slice(0, 8)}`,
+          startMs: right.startMs + gap,
+        }),
+      );
+    }
+  }
+
+  return { ...track, clips: sortClips(nextClips) };
+}
+
+function applyOverwriteWindow(track: Track, startMs: number, endMs: number): Track {
+  if (endMs <= startMs) return track;
+  const trimStart = Math.max(0, Math.round(startMs));
+  const trimEnd = Math.max(trimStart, Math.round(endMs));
+  const nextClips: Clip[] = [];
+
+  for (const source of sortClips(track.clips)) {
+    const clip = sanitizeClip(source);
+    const clipStart = clip.startMs;
+    const clipEnd = clip.startMs + clip.durationMs;
+
+    if (clipEnd <= trimStart || clipStart >= trimEnd) {
+      nextClips.push(clip);
+      continue;
+    }
+
+    const left = cloneClipWithWindow(clip, clipStart, trimStart);
+    const right = cloneClipWithWindow(clip, trimEnd, clipEnd);
+    if (left) nextClips.push(left);
+    if (right) {
+      nextClips.push(
+        sanitizeClip({
+          ...right,
+          id: `clip-${crypto.randomUUID().slice(0, 8)}`,
+        }),
+      );
+    }
+  }
+
+  return { ...track, clips: sortClips(nextClips) };
+}
+
+function timelineBottomMaxPx(viewportHeight: number): number {
+  return Math.max(TIMELINE_MIN_PX, Math.floor(viewportHeight * 0.62));
+}
+
+function createDefaultEditorLayout(viewportHeight: number): EditorLayout {
+  return {
+    leftPx: 280,
+    rightPx: 320,
+    bottomPx: clamp(Math.round(viewportHeight * 0.34), TIMELINE_MIN_PX, timelineBottomMaxPx(viewportHeight)),
+    sourceSplitPct: 38,
+  };
+}
+
+function normalizeEditorLayout(layout: EditorLayout, viewportHeight: number): EditorLayout {
+  return {
+    leftPx: clamp(layout.leftPx, LEFT_PANEL_MIN_PX, LEFT_PANEL_MAX_PX),
+    rightPx: clamp(layout.rightPx, RIGHT_PANEL_MIN_PX, RIGHT_PANEL_MAX_PX),
+    bottomPx: clamp(layout.bottomPx, TIMELINE_MIN_PX, timelineBottomMaxPx(viewportHeight)),
+    sourceSplitPct: clamp(layout.sourceSplitPct, SOURCE_SPLIT_MIN_PCT, SOURCE_SPLIT_MAX_PCT),
+  };
+}
+
+function readStoredEditorLayout(viewportHeight: number): EditorLayout {
+  const fallback = createDefaultEditorLayout(viewportHeight);
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(EDITOR_LAYOUT_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<StoredEditorLayoutV1> & { v?: number };
+    if (parsed.v !== 1) return fallback;
+    return normalizeEditorLayout(
+      {
+        leftPx: parsed.leftPx ?? fallback.leftPx,
+        rightPx: parsed.rightPx ?? fallback.rightPx,
+        bottomPx: parsed.bottomPx ?? fallback.bottomPx,
+        sourceSplitPct: parsed.sourceSplitPct ?? fallback.sourceSplitPct,
+      },
+      viewportHeight,
+    );
+  } catch {
+    return fallback;
+  }
+}
+
+function persistEditorLayout(layout: EditorLayout) {
+  try {
+    const payload: StoredEditorLayoutV1 = {
+      v: 1,
+      leftPx: layout.leftPx,
+      rightPx: layout.rightPx,
+      bottomPx: layout.bottomPx,
+      sourceSplitPct: layout.sourceSplitPct,
+    };
+    window.localStorage.setItem(EDITOR_LAYOUT_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage errors; layout remains functional in memory.
+  }
 }
 
 function quantize(value: number, step: number): number {
@@ -347,7 +594,13 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName.toLowerCase();
-  if (tag === "input" || tag === "textarea" || tag === "select" || tag === "button") return true;
+  if (tag === "textarea" || tag === "select") return true;
+  if (tag === "input") {
+    const input = target as HTMLInputElement;
+    const type = (input.type || "text").toLowerCase();
+    if (type === "range") return false;
+    return true;
+  }
   return target.isContentEditable;
 }
 
@@ -415,6 +668,55 @@ function findOrCreateUnlockedTrack(
   return { tracks: next, trackIndex: insertIndex };
 }
 
+function insertTrackForOutOfBoundsDrag(
+  tracks: Track[],
+  kind: "video" | "audio",
+  edge: "above" | "below",
+): { tracks: Track[]; trackId: string } {
+  const next = [...tracks];
+  const trackId = nextTrackId(next, kind);
+  const newTrack: Track = {
+    id: trackId,
+    kind,
+    muted: false,
+    locked: false,
+    visible: true,
+    clips: [],
+  };
+
+  if (kind === "audio") {
+    if (edge === "above") {
+      const firstAudioIndex = next.findIndex((track) => track.kind === "audio");
+      const insertIndex = firstAudioIndex >= 0 ? firstAudioIndex : next.length;
+      next.splice(insertIndex, 0, newTrack);
+    } else {
+      next.push(newTrack);
+    }
+    return { tracks: next, trackId };
+  }
+
+  const firstVideoIndex = next.findIndex((track) => track.kind === "video");
+  const firstAudioIndex = next.findIndex((track) => track.kind === "audio");
+  const lastVideoIndex = (() => {
+    for (let index = next.length - 1; index >= 0; index -= 1) {
+      if (next[index].kind === "video") return index;
+    }
+    return -1;
+  })();
+
+  if (edge === "above") {
+    const insertIndex = firstVideoIndex >= 0 ? firstVideoIndex : (firstAudioIndex >= 0 ? firstAudioIndex : next.length);
+    next.splice(insertIndex, 0, newTrack);
+  } else if (lastVideoIndex >= 0) {
+    next.splice(lastVideoIndex + 1, 0, newTrack);
+  } else {
+    const insertIndex = firstAudioIndex >= 0 ? firstAudioIndex : next.length;
+    next.splice(insertIndex, 0, newTrack);
+  }
+
+  return { tracks: next, trackId };
+}
+
 function toMediaRole(kind: TrackKind): ClipMediaRole {
   if (kind === "audio") return "audio";
   if (kind === "overlay") return "overlay";
@@ -423,6 +725,12 @@ function toMediaRole(kind: TrackKind): ClipMediaRole {
 
 function effectiveClipRole(trackKind: TrackKind, clip: Clip): ClipMediaRole {
   return clip.mediaRole ?? toMediaRole(trackKind);
+}
+
+function isRoleCompatibleWithTrack(role: ClipMediaRole, trackKind: TrackKind): boolean {
+  if (role === "audio") return trackKind === "audio";
+  if (role === "overlay") return trackKind === "overlay";
+  return trackKind === "video";
 }
 
 function defaultClipVisual(): ClipVisual {
@@ -625,7 +933,7 @@ function findProgramStackAtMs(project: ProjectState, playheadMs: number): Progra
   return stack.sort((a, b) => {
     const roleDiff = a.role === b.role ? 0 : a.role === "video" ? -1 : 1;
     if (roleDiff !== 0) return roleDiff;
-    const trackDiff = a.trackOrder - b.trackOrder;
+    const trackDiff = b.trackOrder - a.trackOrder;
     if (trackDiff !== 0) return trackDiff;
     const startDiff = a.clipStartMs - b.clipStartMs;
     if (startDiff !== 0) return startDiff;
@@ -866,6 +1174,13 @@ function applyCollisionPolicy(
   return applyNoOverlap(track, clipId, nextClip);
 }
 
+function constrainClipForTargetTrack(track: Track, nextClip: Clip, mode: CollisionMode): Clip {
+  const sanitized = sanitizeClip(nextClip);
+  if (mode === "allow-overlap") return sanitized;
+  const constrainedTrack = mode === "push" ? applyPush(track, sanitized.id, sanitized) : applyNoOverlap(track, sanitized.id, sanitized);
+  return constrainedTrack.clips.find((clip) => clip.id === sanitized.id) ?? sanitized;
+}
+
 type ClipRef = {
   trackId: string;
   clipId: string;
@@ -955,6 +1270,43 @@ function applyClipUpdatesAtomically(
   return tracks;
 }
 
+function moveClipBetweenTracks(
+  tracks: Track[],
+  fromTrackId: string,
+  toTrackId: string,
+  nextClip: Clip,
+  mode: CollisionMode,
+): Track[] | null {
+  if (fromTrackId === toTrackId) return tracks;
+  const nextTracks = tracks.map((track) => ({
+    ...track,
+    clips: [...track.clips],
+  }));
+  const fromIndex = nextTracks.findIndex((track) => track.id === fromTrackId);
+  const toIndex = nextTracks.findIndex((track) => track.id === toTrackId);
+  if (fromIndex < 0 || toIndex < 0) return null;
+
+  const fromTrack = nextTracks[fromIndex];
+  const toTrack = nextTracks[toIndex];
+  if (!fromTrack || !toTrack || fromTrack.locked || toTrack.locked) return null;
+  if (!fromTrack.clips.some((clip) => clip.id === nextClip.id)) return null;
+
+  const removedSource = fromTrack.clips.filter((clip) => clip.id !== nextClip.id);
+  let nextTarget: Track;
+  if (mode === "allow-overlap") {
+    nextTarget = { ...toTrack, clips: sortClips([...toTrack.clips, sanitizeClip(nextClip)]) };
+  } else if (mode === "push") {
+    nextTarget = applyPush(toTrack, nextClip.id, nextClip);
+  } else {
+    nextTarget = applyNoOverlap(toTrack, nextClip.id, nextClip);
+  }
+  if (!nextTarget.clips.some((clip) => clip.id === nextClip.id)) return null;
+
+  nextTracks[fromIndex] = { ...fromTrack, clips: sortClips(removedSource) };
+  nextTracks[toIndex] = nextTarget;
+  return nextTracks;
+}
+
 function createSeededRandom(seed: number): () => number {
   let state = (seed >>> 0) || 0x6d2b79f5;
   return () => {
@@ -1018,6 +1370,13 @@ export default function App() {
   const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
+  const [editorLayout, setEditorLayout] = useState<EditorLayout>(() =>
+    readStoredEditorLayout(typeof window === "undefined" ? 900 : window.innerHeight),
+  );
+  const [isDesktopResizable, setIsDesktopResizable] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth > DESKTOP_LAYOUT_BREAKPOINT,
+  );
+  const [previewMonitorMode, setPreviewMonitorMode] = useState<"program" | "source">("program");
 
   const [sourceVideoUrl, setSourceVideoUrl] = useState<string | null>(null);
   const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
@@ -1025,6 +1384,28 @@ export default function App() {
   const [videoDurationMs, setVideoDurationMs] = useState<number>(0);
   const [sourcePlayheadMs, setSourcePlayheadMs] = useState<number>(0);
   const [sourceDurationMs, setSourceDurationMs] = useState<number>(0);
+  const [sourceRangesByAsset, setSourceRangesByAsset] = useState<Record<string, SourceRangeState>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem(SOURCE_RANGE_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, Partial<SourceRangeState>>;
+      const normalized: Record<string, SourceRangeState> = {};
+      for (const [assetId, value] of Object.entries(parsed)) {
+        normalized[assetId] = {
+          inMs: typeof value?.inMs === "number" && Number.isFinite(value.inMs) ? Math.round(value.inMs) : null,
+          outMs: typeof value?.outMs === "number" && Number.isFinite(value.outMs) ? Math.round(value.outMs) : null,
+          lastPlayheadMs:
+            typeof value?.lastPlayheadMs === "number" && Number.isFinite(value.lastPlayheadMs)
+              ? Math.max(0, Math.round(value.lastPlayheadMs))
+              : 0,
+        };
+      }
+      return normalized;
+    } catch {
+      return {};
+    }
+  });
   const [sourceIsPlaying, setSourceIsPlaying] = useState(false);
   const [isFmp4Source, setIsFmp4Source] = useState(false);
   const [decoderMode, setDecoderMode] = useState<"none" | "webcodecs" | "fallback">("none");
@@ -1105,9 +1486,11 @@ export default function App() {
   const programSlotClipIdRef = useRef<Record<ProgramSlot, string | null>>({ a: null, b: null });
   const projectRef = useRef<ProjectState>(project);
   const playheadMsRef = useRef(playheadMs);
+  const editorLayoutRef = useRef<EditorLayout>(editorLayout);
   const programClipContextRef = useRef<ProgramClipContext | null>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const imageLoadingRef = useRef<Set<string>>(new Set());
+  const auxiliaryLayerVideosRef = useRef<HTMLVideoElement[]>([]);
 
   const webCodecsAvailable = useMemo(
     () => typeof VideoDecoder !== "undefined" && typeof VideoEncoder !== "undefined",
@@ -1134,9 +1517,32 @@ export default function App() {
       ),
     [project.timeline.durationMs, videoDurationMs, decoderDurationUs],
   );
+  const activeSourceAssetDurationMs = useMemo(() => {
+    if (!activeAssetId) return 0;
+    const asset = project.assets.find((entry) => entry.id === activeAssetId && entry.kind === "video");
+    const value = asset?.durationMs;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return 0;
+    return Math.round(value);
+  }, [activeAssetId, project.assets]);
   const sourceMonitorDurationMs = useMemo(
-    () => Math.max(sourceDurationMs, 1000),
-    [sourceDurationMs],
+    () => {
+      if (Number.isFinite(sourceDurationMs) && sourceDurationMs > 0) {
+        return Math.round(sourceDurationMs);
+      }
+      if (activeSourceAssetDurationMs > 0) {
+        return activeSourceAssetDurationMs;
+      }
+      return 1000;
+    },
+    [activeSourceAssetDurationMs, sourceDurationMs],
+  );
+  const activeSourceRangeState = useMemo<SourceRangeState | undefined>(
+    () => (activeAssetId ? sourceRangesByAsset[activeAssetId] : undefined),
+    [activeAssetId, sourceRangesByAsset],
+  );
+  const resolvedActiveSourceRange = useMemo(
+    () => resolveSourceWindow(activeSourceRangeState, sourceMonitorDurationMs),
+    [activeSourceRangeState, sourceMonitorDurationMs],
   );
   const clipKey = (trackId: string, clipId: string) => `${trackId}:${clipId}`;
   const parseClipKey = (key: string): ClipRef | null => {
@@ -1179,6 +1585,15 @@ export default function App() {
   const programVisualSignature = programClipContext
     ? `${programClipContext.clipId}:${programClipContext.visual.x}:${programClipContext.visual.y}:${programClipContext.visual.scalePct}:${programClipContext.visual.rotationDeg}:${programClipContext.visual.opacityPct}:${programClipContext.visual.fitMode}`
     : "none";
+  const programStackVisualSignature = useMemo(() => {
+    const stack = findProgramStackAtMs(project, playheadMs);
+    return stack
+      .map(
+        (layer) =>
+          `${layer.trackId}:${layer.clipId}:${layer.visual.x}:${layer.visual.y}:${layer.visual.scalePct}:${layer.visual.rotationDeg}:${layer.visual.opacityPct}:${layer.visual.fitMode}`,
+      )
+      .join("|");
+  }, [project, playheadMs]);
   const selectedClipRole = useMemo(() => {
     if (!selectedClip || !selectedTrack) return null;
     return effectiveClipRole(selectedTrack.kind, selectedClip);
@@ -1217,6 +1632,28 @@ export default function App() {
 
   const hasLockedRefs = (state: ProjectState, refs: ClipRef[]): boolean =>
     refs.some((ref) => isTrackLocked(state, ref.trackId));
+
+  const resizeEditorLayout = (patch: Partial<EditorLayout>) => {
+    const viewportHeight = typeof window === "undefined" ? 900 : window.innerHeight;
+    setEditorLayout((prev) => {
+      const next = normalizeEditorLayout({ ...prev, ...patch }, viewportHeight);
+      editorLayoutRef.current = next;
+      return next;
+    });
+  };
+
+  const commitEditorLayout = () => {
+    persistEditorLayout(editorLayoutRef.current);
+  };
+
+  const resetEditorLayout = () => {
+    const viewportHeight = typeof window === "undefined" ? 900 : window.innerHeight;
+    const next = createDefaultEditorLayout(viewportHeight);
+    setEditorLayout(next);
+    editorLayoutRef.current = next;
+    persistEditorLayout(next);
+    setLog("Layout reset.");
+  };
 
   const setProjectWithNormalize = (
     updater: (prev: ProjectState) => ProjectState,
@@ -1385,16 +1822,36 @@ export default function App() {
   };
 
   const getClipRenderState = (trackId: string, clip: Clip): Clip => {
-    if (interactionPreview && interactionPreview.trackId === trackId && interactionPreview.clipId === clip.id) {
-      return {
-        ...clip,
-        startMs: interactionPreview.startMs,
-        durationMs: interactionPreview.durationMs,
-        inMs: interactionPreview.inMs,
-        outMs: interactionPreview.outMs,
-      };
-    }
+    void trackId;
     return clip;
+  };
+
+  const resolveTimelineTrackAtPointer = (clientX: number, clientY: number): Track | null => {
+    const element = document.elementFromPoint(clientX, clientY);
+    if (!(element instanceof HTMLElement)) return null;
+    const lane = element.closest<HTMLElement>("[data-timeline-track-id]");
+    if (!lane) return null;
+    const trackId = lane.dataset.timelineTrackId;
+    if (!trackId) return null;
+    return project.timeline.tracks.find((track) => track.id === trackId) ?? null;
+  };
+
+  const resolveTimelineDropTargetAtPointer = (
+    clientX: number,
+    clientY: number,
+  ): { track: Track | null; outOfBounds: "above" | "below" | null } => {
+    const track = resolveTimelineTrackAtPointer(clientX, clientY);
+    if (track) {
+      return { track, outOfBounds: null };
+    }
+
+    const laneCanvas = document.querySelector<HTMLElement>(".timelineCanvas.timelineLanes");
+    if (!laneCanvas) return { track: null, outOfBounds: null };
+    const rect = laneCanvas.getBoundingClientRect();
+    if (clientX < rect.left || clientX > rect.right) return { track: null, outOfBounds: null };
+    if (clientY < rect.top) return { track: null, outOfBounds: "above" };
+    if (clientY > rect.bottom) return { track: null, outOfBounds: "below" };
+    return { track: null, outOfBounds: null };
   };
 
   const applyInteractionPreview = () => {
@@ -1477,22 +1934,39 @@ export default function App() {
       outMs = inMs + durationMs;
     }
 
-    const track = project.timeline.tracks.find((item) => item.id === drag.trackId);
-    if (track) {
-      const constrainedTrack = applyCollisionPolicy(
-        track,
-        drag.clipId,
-        {
-          ...original,
-          startMs,
-          durationMs,
-          inMs,
-          outMs,
-        },
-        collisionMode,
-      );
+    let previewTrackId = drag.trackId;
+    let createTrackKind: "video" | "audio" | undefined;
+    let createTrackEdge: "above" | "below" | undefined;
+    if (drag.mode === "move") {
+      const dropTarget = resolveTimelineDropTargetAtPointer(drag.latestClientX, drag.latestClientY);
+      const hoveredTrack = dropTarget.track;
+      if (
+        hoveredTrack &&
+        hoveredTrack.id !== drag.trackId &&
+        !hoveredTrack.locked &&
+        isRoleCompatibleWithTrack(drag.clipRole, hoveredTrack.kind)
+      ) {
+        previewTrackId = hoveredTrack.id;
+      } else if (!hoveredTrack && dropTarget.outOfBounds) {
+        createTrackKind = drag.clipRole === "audio" ? "audio" : "video";
+        createTrackEdge = dropTarget.outOfBounds;
+      }
+    }
 
-      const constrained = constrainedTrack.clips.find((clip) => clip.id === drag.clipId);
+    const candidateClip = {
+      ...original,
+      startMs,
+      durationMs,
+      inMs,
+      outMs,
+    };
+
+    const track = project.timeline.tracks.find((item) => item.id === previewTrackId);
+    if (track) {
+      const constrained =
+        previewTrackId === drag.trackId
+          ? applyCollisionPolicy(track, drag.clipId, candidateClip, collisionMode).clips.find((clip) => clip.id === drag.clipId)
+          : constrainClipForTargetTrack(track, candidateClip, collisionMode);
       if (constrained) {
         startMs = constrained.startMs;
         durationMs = constrained.durationMs;
@@ -1502,13 +1976,15 @@ export default function App() {
     }
 
     const nextPreview: InteractionPreview = {
-      trackId: drag.trackId,
+      trackId: previewTrackId,
       clipId: drag.clipId,
       startMs,
       durationMs,
       inMs,
       outMs,
       snapGuideMs: guide,
+      createTrackKind,
+      createTrackEdge,
     };
 
     interactionPreviewRef.current = nextPreview;
@@ -1531,6 +2007,7 @@ export default function App() {
     if (!dragRef.current) return;
     if (event.pointerId !== dragRef.current.pointerId) return;
     dragRef.current.latestClientX = event.clientX;
+    dragRef.current.latestClientY = event.clientY;
     flushDragPreview();
   };
 
@@ -1546,6 +2023,7 @@ export default function App() {
     if (event.pointerId !== drag.pointerId) return;
 
     drag.latestClientX = event.clientX;
+    drag.latestClientY = event.clientY;
     applyInteractionPreview();
     const preview = interactionPreviewRef.current;
 
@@ -1606,13 +2084,57 @@ export default function App() {
           };
         });
 
+        let destinationTrackId = drag.mode === "move" ? preview.trackId : drag.trackId;
+        const createTrackIntent =
+          drag.mode === "move" && preview.createTrackKind && preview.createTrackEdge
+            ? { kind: preview.createTrackKind, edge: preview.createTrackEdge }
+            : null;
+        const moveAcrossTrack = drag.mode === "move" && (destinationTrackId !== drag.trackId || createTrackIntent != null);
+        let committedDestinationTrackId = destinationTrackId;
+        let createdTrackId: string | null = null;
+        let moveCommitted = false;
         setProjectWithNormalize((prev) => {
-          const tracks = applyClipUpdatesAtomically(prev, updates, collisionMode);
+          let tracks = applyClipUpdatesAtomically(prev, updates, collisionMode);
           if (!tracks) return prev;
+
+          if (moveAcrossTrack) {
+            if (createTrackIntent) {
+              const inserted = insertTrackForOutOfBoundsDrag(tracks, createTrackIntent.kind, createTrackIntent.edge);
+              tracks = inserted.tracks;
+              destinationTrackId = inserted.trackId;
+              committedDestinationTrackId = inserted.trackId;
+              createdTrackId = inserted.trackId;
+            }
+
+            const targetTrack = tracks.find((track) => track.id === destinationTrackId);
+            if (!targetTrack || targetTrack.locked) return prev;
+            if (!isRoleCompatibleWithTrack(drag.clipRole, targetTrack.kind)) return prev;
+            const movedUpdate = updates.find((item) => item.trackId === drag.trackId && item.clipId === drag.clipId);
+            if (!movedUpdate) return prev;
+            const moved = moveClipBetweenTracks(tracks, drag.trackId, destinationTrackId, movedUpdate.nextClip, collisionMode);
+            if (!moved) return prev;
+            tracks = moved;
+            moveCommitted = true;
+          } else {
+            moveCommitted = true;
+          }
+
           return { ...prev, timeline: { ...prev.timeline, tracks } };
         });
+        if (moveAcrossTrack && moveCommitted) {
+          setSelection({ trackId: committedDestinationTrackId, clipId: drag.clipId });
+          setSelectedClipKeys((prevKeys) =>
+            prevKeys.map((key) =>
+              key === clipKey(drag.trackId, drag.clipId) ? clipKey(committedDestinationTrackId, drag.clipId) : key,
+            ),
+          );
+        }
         const scopeLabel = drag.linkedClips.length > 1 ? "linked group" : drag.clipId;
-        setLog(`Committed ${drag.mode} for ${scopeLabel} (${collisionMode}).`);
+        if (createdTrackId) {
+          setLog(`Created ${createTrackIntent?.kind ?? "video"} track and moved ${scopeLabel}.`);
+        } else {
+          setLog(`Committed ${drag.mode} for ${scopeLabel} (${collisionMode}).`);
+        }
       }
     }
 
@@ -1678,6 +2200,8 @@ export default function App() {
     event.currentTarget.setPointerCapture(event.pointerId);
 
     const thresholdMs = (8 / pixelsPerSecond) * 1000;
+    const sourceTrack = project.timeline.tracks.find((item) => item.id === trackId);
+    const clipRole = sourceTrack ? effectiveClipRole(sourceTrack.kind, clip) : clip.mediaRole ?? "video";
     const linkedRefs = expandClipRefsWithLinks(project, [{ trackId, clipId: clip.id }]);
     const linkedClips: ClipWithRef[] = linkedRefs
       .map((ref) => findClipByRef(project, ref))
@@ -1687,8 +2211,11 @@ export default function App() {
       mode,
       trackId,
       clipId: clip.id,
+      clipRole,
       startClientX: event.clientX,
+      startClientY: event.clientY,
       latestClientX: event.clientX,
+      latestClientY: event.clientY,
       original: clip,
       linkedClips,
       snapTargetsMs: collectSnapTargets(project, clip.id, playheadMs),
@@ -2203,6 +2730,13 @@ export default function App() {
       const tracks = [...prev.timeline.tracks];
       if (kind === "audio") {
         tracks.push(nextTrack);
+      } else if (kind === "video") {
+        const firstVideoIndex = tracks.findIndex((track) => track.kind === "video");
+        const insertIndex = firstVideoIndex >= 0 ? firstVideoIndex : (() => {
+          const firstAudioIndex = tracks.findIndex((track) => track.kind === "audio");
+          return firstAudioIndex >= 0 ? firstAudioIndex : tracks.length;
+        })();
+        tracks.splice(insertIndex, 0, nextTrack);
       } else {
         const firstAudioIndex = tracks.findIndex((track) => track.kind === "audio");
         const insertIndex = firstAudioIndex >= 0 ? firstAudioIndex : tracks.length;
@@ -2211,6 +2745,98 @@ export default function App() {
       return { ...prev, timeline: { ...prev.timeline, tracks } };
     });
     setLog(`Track added: ${kind}.`);
+  };
+
+  const addAssetToNewTrack = (assetId: string, trackKind: "video" | "audio", startMs: number) => {
+    const asset = project.assets.find((item) => item.id === assetId);
+    if (!asset) {
+      setLog("Asset not found.");
+      return;
+    }
+    if (trackKind === "video" && !(asset.kind === "video" || asset.kind === "image")) {
+      setLog("Only visual assets can be dropped on video tracks.");
+      return;
+    }
+    if (trackKind === "audio" && asset.kind !== "audio") {
+      setLog("Only audio assets can be dropped on audio tracks.");
+      return;
+    }
+
+    setProjectWithNormalize((prev) => {
+      let tracks = [...prev.timeline.tracks];
+      const nextId = nextTrackId(tracks, trackKind);
+      const nextTrack: Track = { id: nextId, kind: trackKind, muted: false, locked: false, visible: true, clips: [] };
+      if (trackKind === "audio") {
+        tracks.push(nextTrack);
+      } else {
+        const firstVideoIndex = tracks.findIndex((track) => track.kind === "video");
+        const insertIndex = firstVideoIndex >= 0 ? firstVideoIndex : (() => {
+          const firstAudioIndex = tracks.findIndex((track) => track.kind === "audio");
+          return firstAudioIndex >= 0 ? firstAudioIndex : tracks.length;
+        })();
+        tracks.splice(insertIndex, 0, nextTrack);
+      }
+      const trackIndex = tracks.findIndex((track) => track.id === nextId);
+      if (trackIndex < 0) return prev;
+      const targetTrack = { ...tracks[trackIndex], clips: [...tracks[trackIndex].clips] };
+      const nextStartMs = Math.max(0, Math.round(startMs));
+      const durationMs = Math.max(
+        MIN_CLIP_DURATION_MS,
+        Math.round(asset.durationMs ?? (asset.kind === "image" ? 3000 : videoDurationMs ?? 3000)),
+      );
+      const clipId = `clip-${crypto.randomUUID().slice(0, 8)}`;
+      const shouldCreateLinkedAudio = asset.kind === "video" && asset.hasAudio !== false;
+      const linkGroupId = shouldCreateLinkedAudio ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined;
+      const clip: Clip = {
+        id: clipId,
+        label: asset.name ?? (asset.kind === "image" ? "image" : "clip"),
+        assetId: asset.id,
+        startMs: nextStartMs,
+        durationMs,
+        inMs: 0,
+        outMs: durationMs,
+        mediaRole: trackKind === "audio" ? "audio" : "video",
+        linkGroupId,
+        linkLocked: Boolean(linkGroupId),
+        visual: trackKind === "audio" ? undefined : defaultClipVisual(),
+      };
+      targetTrack.clips.push(clip);
+      tracks[trackIndex] = targetTrack;
+
+      if (shouldCreateLinkedAudio) {
+        const resolvedAudio = findOrCreateUnlockedTrack(tracks, "audio");
+        if (resolvedAudio) {
+          tracks = resolvedAudio.tracks;
+          const audioTrack = {
+            ...tracks[resolvedAudio.trackIndex],
+            clips: [...tracks[resolvedAudio.trackIndex].clips],
+          };
+          const audioClipId = `clip-${crypto.randomUUID().slice(0, 8)}`;
+          const audioClip: Clip = {
+            id: audioClipId,
+            label: `${asset.name ?? "video"} audio`,
+            assetId: asset.id,
+            startMs: nextStartMs,
+            durationMs,
+            inMs: 0,
+            outMs: durationMs,
+            mediaRole: "audio",
+            linkGroupId,
+            linkLocked: true,
+            visual: undefined,
+          };
+          audioTrack.clips.push(audioClip);
+          tracks[resolvedAudio.trackIndex] = audioTrack;
+        }
+      }
+
+      const timelineDuration = Math.max(prev.timeline.durationMs, clip.startMs + clip.durationMs + 1000);
+      setSelection({ trackId: nextId, clipId: clipId });
+      setSelectedClipKeys([clipKey(nextId, clipId)]);
+      setPlayheadMs(clip.startMs);
+      return { ...prev, timeline: { ...prev.timeline, durationMs: timelineDuration, tracks } };
+    });
+    setLog(`Created ${trackKind} track and added ${asset.name ?? assetId}.`);
   };
 
   const toggleTrackFlag = (trackId: string, key: "muted" | "locked" | "visible") => {
@@ -2620,7 +3246,13 @@ export default function App() {
 
   const togglePlayback = () => {
     setSourceIsPlaying(false);
-    setIsPlaying((prev) => !prev);
+    setIsPlaying((prev) => {
+      const next = !prev;
+      if (next) {
+        setPreviewMonitorMode("program");
+      }
+      return next;
+    });
   };
 
   const stepFrame = (direction: "forward" | "backward") => {
@@ -3096,6 +3728,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(SOURCE_RANGE_STORAGE_KEY, JSON.stringify(sourceRangesByAsset));
+    } catch {
+      // Ignore local storage errors; source ranges still work in memory.
+    }
+  }, [sourceRangesByAsset]);
+
+  useEffect(() => {
     const worker = new Worker(new URL("./preview/media-analysis.worker.ts", import.meta.url), {
       type: "module",
     });
@@ -3153,12 +3793,72 @@ export default function App() {
   }, [devMode]);
 
   useEffect(() => {
+    return () => {
+      for (const video of auxiliaryLayerVideosRef.current) {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      }
+      auxiliaryLayerVideosRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
     projectRef.current = project;
   }, [project]);
 
   useEffect(() => {
     playheadMsRef.current = playheadMs;
   }, [playheadMs]);
+
+  useEffect(() => {
+    if (sourceIsPlaying) return;
+    if (!activeAssetId) return;
+    const asset = project.assets.find((entry) => entry.id === activeAssetId);
+    if (!asset || asset.kind !== "video") return;
+    const nextMs = clamp(Math.round(sourcePlayheadMs), 0, sourceMonitorDurationMs);
+    setSourceRangesByAsset((prev) => {
+      const current = prev[activeAssetId] ?? { inMs: null, outMs: null, lastPlayheadMs: 0 };
+      if (current.lastPlayheadMs === nextMs) return prev;
+      return {
+        ...prev,
+        [activeAssetId]: {
+          ...current,
+          lastPlayheadMs: nextMs,
+        },
+      };
+    });
+  }, [activeAssetId, project.assets, sourceIsPlaying, sourceMonitorDurationMs, sourcePlayheadMs]);
+
+  useEffect(() => {
+    editorLayoutRef.current = editorLayout;
+  }, [editorLayout]);
+
+  useEffect(() => {
+    const onViewportResize = () => {
+      const nextDesktop = window.innerWidth > DESKTOP_LAYOUT_BREAKPOINT;
+      setIsDesktopResizable((prev) => (prev === nextDesktop ? prev : nextDesktop));
+
+      const viewportHeight = window.innerHeight || 900;
+      setEditorLayout((prev) => {
+        const next = normalizeEditorLayout(prev, viewportHeight);
+        if (
+          prev.leftPx === next.leftPx &&
+          prev.rightPx === next.rightPx &&
+          prev.bottomPx === next.bottomPx &&
+          prev.sourceSplitPct === next.sourceSplitPct
+        ) {
+          return prev;
+        }
+        editorLayoutRef.current = next;
+        return next;
+      });
+    };
+
+    onViewportResize();
+    window.addEventListener("resize", onViewportResize);
+    return () => window.removeEventListener("resize", onViewportResize);
+  }, []);
 
   useEffect(() => {
     programClipContextRef.current = programClipContext;
@@ -3168,6 +3868,38 @@ export default function App() {
     slot === "a" ? programVideoARef.current : programVideoBRef.current;
 
   const getInactiveProgramSlot = (slot: ProgramSlot): ProgramSlot => (slot === "a" ? "b" : "a");
+  const getAuxiliaryLayerVideo = (index: number): HTMLVideoElement => {
+    const existing = auxiliaryLayerVideosRef.current[index];
+    if (existing) return existing;
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+    auxiliaryLayerVideosRef.current[index] = video;
+    return video;
+  };
+
+  const prepareAuxiliaryVideoLayer = (video: HTMLVideoElement, context: ProgramClipContext): boolean => {
+    if (context.assetKind !== "video") return false;
+    const targetSeconds = Math.max(0, context.localMs) / 1000;
+    const needsSourceSwitch = video.dataset.assetUrl !== context.assetUrl || video.dataset.clipId !== context.clipId;
+    if (needsSourceSwitch) {
+      video.dataset.assetUrl = context.assetUrl;
+      video.dataset.clipId = context.clipId;
+      video.src = context.assetUrl;
+      video.load();
+      return false;
+    }
+    if (video.readyState < 2) return false;
+    if (Math.abs(video.currentTime - targetSeconds) > 0.05) {
+      try {
+        video.currentTime = targetSeconds;
+      } catch {
+        return false;
+      }
+    }
+    return video.readyState >= 2;
+  };
 
   const drawProgramComposite = (
     baseSource: CanvasImageSource | null,
@@ -3219,26 +3951,41 @@ export default function App() {
 
     const primary = baseContext ?? stack.find((item) => item.role === "video") ?? stack[0] ?? null;
     if (!primary) return;
-
-    if (baseSource) {
-      drawVisualLayerOnCanvas(
-        canvas,
-        baseSource,
-        primary.visual,
-        projectWidth,
-        projectHeight,
-        primary.sourceWidth,
-        primary.sourceHeight,
-      );
-    } else if (primary.assetKind === "image") {
-      drawImageContext(primary);
-    }
+    const primaryKey = primary.clipId;
+    let auxVideoIndex = 0;
 
     for (const layer of stack) {
-      if (layer.clipId === primary.clipId) continue;
       if (layer.assetKind === "image") {
         drawImageContext(layer);
+        continue;
       }
+
+      if (layer.clipId === primaryKey && baseSource) {
+        drawVisualLayerOnCanvas(
+          canvas,
+          baseSource,
+          layer.visual,
+          projectWidth,
+          projectHeight,
+          layer.sourceWidth,
+          layer.sourceHeight,
+        );
+        continue;
+      }
+
+      const auxVideo = getAuxiliaryLayerVideo(auxVideoIndex);
+      auxVideoIndex += 1;
+      const ready = prepareAuxiliaryVideoLayer(auxVideo, layer);
+      if (!ready) continue;
+      drawVisualLayerOnCanvas(
+        canvas,
+        auxVideo,
+        layer.visual,
+        projectWidth,
+        projectHeight,
+        layer.sourceWidth,
+        layer.sourceHeight,
+      );
     }
   };
 
@@ -3561,6 +4308,7 @@ export default function App() {
 
       if (event.key.toLowerCase() === "l") {
         event.preventDefault();
+        setPreviewMonitorMode("program");
         setIsPlaying(true);
         return;
       }
@@ -3573,13 +4321,33 @@ export default function App() {
 
       if (event.key.toLowerCase() === "i") {
         event.preventDefault();
-        setMarkInAtPlayhead();
+        if (previewMonitorMode === "source") {
+          setSourceInAtPlayhead();
+        } else {
+          setMarkInAtPlayhead();
+        }
         return;
       }
 
       if (event.key.toLowerCase() === "o") {
         event.preventDefault();
-        setMarkOutAtPlayhead();
+        if (previewMonitorMode === "source") {
+          setSourceOutAtPlayhead();
+        } else {
+          setMarkOutAtPlayhead();
+        }
+        return;
+      }
+
+      if (event.key === "," && previewMonitorMode === "source") {
+        event.preventDefault();
+        insertFromSourceMonitor("insert");
+        return;
+      }
+
+      if (event.key === "." && previewMonitorMode === "source") {
+        event.preventDefault();
+        insertFromSourceMonitor("overwrite");
         return;
       }
 
@@ -3648,7 +4416,23 @@ export default function App() {
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onWindowBlur);
     };
-  }, [decoderFps, nudgeSelected, redo, removeSelected, splitSelected, togglePlayback, undo, stopPlayback, stepFrame, setMarkInAtPlayhead, setMarkOutAtPlayhead]);
+  }, [
+    decoderFps,
+    insertFromSourceMonitor,
+    nudgeSelected,
+    previewMonitorMode,
+    redo,
+    removeSelected,
+    setMarkInAtPlayhead,
+    setMarkOutAtPlayhead,
+    setSourceInAtPlayhead,
+    setSourceOutAtPlayhead,
+    splitSelected,
+    stepFrame,
+    stopPlayback,
+    togglePlayback,
+    undo,
+  ]);
 
   useEffect(() => {
     if (mainTrackMagnet && collisionMode === "allow-overlap") {
@@ -3906,7 +4690,7 @@ export default function App() {
     if (!programAssetId) return;
     if (loadedDecoderAssetIdRef.current !== programAssetId) return;
     queuePreviewSeek(programLocalPlayheadUs);
-  }, [decoderMode, isPlaying, programAssetId, programLocalPlayheadUs, programVisualSignature]);
+  }, [decoderMode, isPlaying, programAssetId, programLocalPlayheadUs, programVisualSignature, programStackVisualSignature]);
 
   useEffect(() => {
     const useFallbackPreview = decoderMode !== "webcodecs";
@@ -4082,7 +4866,8 @@ export default function App() {
     lastSeekResultRef.current = null;
     latestHandledRequestIdRef.current = 0;
     setSourceIsPlaying(false);
-    setSourcePlayheadMs(0);
+    const rememberedPlayhead = sourceRangesByAsset[assetId]?.lastPlayheadMs ?? 0;
+    setSourcePlayheadMs(Math.max(0, Math.round(rememberedPlayhead)));
     setSourceDurationMs(0);
 
     const worker = decodeWorkerRef.current;
@@ -4107,44 +4892,305 @@ export default function App() {
     if (!file) return;
     const assetId = `asset-${crypto.randomUUID().slice(0, 8)}`;
     const url = URL.createObjectURL(file);
+    const isImage = file.type.startsWith("image/");
+    const kind: Asset["kind"] = isImage ? "image" : "video";
 
-    assetFilesRef.current.set(assetId, file);
+    if (!isImage) {
+      assetFilesRef.current.set(assetId, file);
+    }
     setProjectWithNormalize((prev) => ({
       ...prev,
       assets: [
         ...prev.assets,
         {
           id: assetId,
-          kind: "video",
+          kind,
           url,
           name: file.name,
-          durationMs: 0,
+          durationMs: isImage ? 3000 : 0,
+          heroThumbnail: isImage ? url : undefined,
+          thumbnails: isImage ? [url] : undefined,
+          hasAudio: isImage ? false : undefined,
         },
       ],
     }));
 
-    requestAssetAnalysis(assetId, file, 0);
+    if (!isImage) {
+      requestAssetAnalysis(assetId, file, 0);
+    }
     setAiJobStatus("idle");
     setAiSummary(null);
     setAiLastOutput(null);
+
+    if (isImage) {
+      setActiveAssetId(assetId);
+      setLog(`Loaded image asset: ${file.name}`);
+      return;
+    }
 
     await loadAssetForPreview(assetId, file, url);
     setLog(`Loaded media asset: ${file.name}`);
   };
 
-  const onActivateAsset = async (assetId: string) => {
+  const onActivateAsset = async (assetId: string): Promise<boolean> => {
     const file = assetFilesRef.current.get(assetId);
     const asset = project.assets.find((item) => item.id === assetId);
-    if (!file || !asset || asset.kind !== "video") {
+    if (!asset) {
       setLog("Cannot open asset for preview (missing local file).");
-      return;
+      return false;
+    }
+    if (asset.kind === "image") {
+      setActiveAssetId(assetId);
+      setLog(`Selected image asset: ${asset.name ?? asset.id}`);
+      return false;
+    }
+    if (!file || asset.kind !== "video") {
+      setLog("Cannot open asset for preview (missing local file).");
+      return false;
     }
     await loadAssetForPreview(assetId, file, asset.url);
     setLog(`Opened asset in preview: ${asset.name ?? asset.id}`);
+    return true;
   };
 
+  function updateSourceRangeForAsset(
+    assetId: string,
+    updater: (prev: SourceRangeState) => SourceRangeState,
+    durationMs: number,
+  ) {
+    setSourceRangesByAsset((prev) => {
+      const current = prev[assetId] ?? { inMs: null, outMs: null, lastPlayheadMs: 0 };
+      const nextRaw = updater(current);
+      const points = normalizeSourceRangePoints(nextRaw.inMs, nextRaw.outMs, durationMs);
+      return {
+        ...prev,
+        [assetId]: {
+          inMs: points.inMs,
+          outMs: points.outMs,
+          lastPlayheadMs: Math.max(0, Math.round(nextRaw.lastPlayheadMs)),
+        },
+      };
+    });
+  }
+
+  function setSourceInAtPlayhead() {
+    if (!activeAssetId) {
+      setLog("Open a source clip before setting In.");
+      return;
+    }
+    const asset = project.assets.find((item) => item.id === activeAssetId);
+    if (!asset || asset.kind !== "video") {
+      setLog("Source In/Out is available for video assets only.");
+      return;
+    }
+    const markerMs = clamp(Math.round(sourcePlayheadMs), 0, sourceMonitorDurationMs);
+    updateSourceRangeForAsset(
+      asset.id,
+      (prev) => ({
+        ...prev,
+        inMs: markerMs,
+        lastPlayheadMs: markerMs,
+      }),
+      sourceMonitorDurationMs,
+    );
+    setLog("Source In point updated.");
+  }
+
+  function setSourceOutAtPlayhead() {
+    if (!activeAssetId) {
+      setLog("Open a source clip before setting Out.");
+      return;
+    }
+    const asset = project.assets.find((item) => item.id === activeAssetId);
+    if (!asset || asset.kind !== "video") {
+      setLog("Source In/Out is available for video assets only.");
+      return;
+    }
+    const markerMs = clamp(Math.round(sourcePlayheadMs), 0, sourceMonitorDurationMs);
+    updateSourceRangeForAsset(
+      asset.id,
+      (prev) => ({
+        ...prev,
+        outMs: markerMs,
+        lastPlayheadMs: markerMs,
+      }),
+      sourceMonitorDurationMs,
+    );
+    setLog("Source Out point updated.");
+  }
+
+  function clearSourceRange() {
+    if (!activeAssetId) return;
+    const asset = project.assets.find((item) => item.id === activeAssetId);
+    if (!asset || asset.kind !== "video") return;
+    updateSourceRangeForAsset(
+      asset.id,
+      (prev) => ({
+        ...prev,
+        inMs: null,
+        outMs: null,
+        lastPlayheadMs: clamp(Math.round(sourcePlayheadMs), 0, sourceMonitorDurationMs),
+      }),
+      sourceMonitorDurationMs,
+    );
+    setLog("Source range cleared.");
+  }
+
+  function insertSourceRangeToTimeline(options: {
+    assetId: string;
+    mode: "insert" | "overwrite" | "append";
+    targetTrackId?: string;
+    targetStartMs?: number;
+    inMs?: number | null;
+    outMs?: number | null;
+  }) {
+    const asset = project.assets.find((item) => item.id === options.assetId);
+    if (!asset || asset.kind !== "video") {
+      setLog("Source insert requires a video asset.");
+      return;
+    }
+
+    const assetDurationHintMs =
+      typeof asset.durationMs === "number" && Number.isFinite(asset.durationMs) && asset.durationMs > 0
+        ? Math.round(asset.durationMs)
+        : options.assetId === activeAssetId
+          ? sourceMonitorDurationMs
+          : 1000;
+    const sourceState = sourceRangesByAsset[options.assetId];
+    const resolvedWindow = resolveSourceWindow(
+      {
+        inMs: options.inMs ?? sourceState?.inMs ?? null,
+        outMs: options.outMs ?? sourceState?.outMs ?? null,
+        lastPlayheadMs: sourceState?.lastPlayheadMs ?? 0,
+      },
+      assetDurationHintMs,
+    );
+    const sourceInMs = resolvedWindow.inMs;
+    const sourceOutMs = resolvedWindow.outMs;
+    const rawRangeDurationMs = Math.max(1, sourceOutMs - sourceInMs);
+    const minDurationMs =
+      sourceInMs + MIN_CLIP_DURATION_MS <= assetDurationHintMs ? MIN_CLIP_DURATION_MS : rawRangeDurationMs;
+    const sourceDurationMs = Math.max(rawRangeDurationMs, minDurationMs);
+    const hasLinkedAudio = asset.hasAudio !== false;
+
+    setProjectWithNormalize((prev) => {
+      let tracks = [...prev.timeline.tracks];
+      let visualTrackIndex = -1;
+      if (options.targetTrackId) {
+        const index = tracks.findIndex((track) => track.id === options.targetTrackId);
+        const track = index >= 0 ? tracks[index] : null;
+        if (!track || track.kind !== "video" || track.locked) {
+          return prev;
+        }
+        visualTrackIndex = index;
+      } else {
+        const resolvedVisual = findOrCreateUnlockedTrack(tracks, "video");
+        if (!resolvedVisual) return prev;
+        tracks = resolvedVisual.tracks;
+        visualTrackIndex = resolvedVisual.trackIndex;
+      }
+
+      let visualTrack = { ...tracks[visualTrackIndex], clips: [...tracks[visualTrackIndex].clips] };
+      let insertAtMs = 0;
+      if (options.mode === "append") {
+        insertAtMs = visualTrack.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
+      } else if (typeof options.targetStartMs === "number" && Number.isFinite(options.targetStartMs)) {
+        insertAtMs = Math.max(0, Math.round(options.targetStartMs));
+      } else {
+        insertAtMs = Math.max(0, Math.round(playheadMsRef.current));
+      }
+
+      if (options.mode === "insert") {
+        visualTrack = applyInsertGap(visualTrack, insertAtMs, sourceDurationMs);
+      } else if (options.mode === "overwrite") {
+        visualTrack = applyOverwriteWindow(visualTrack, insertAtMs, insertAtMs + sourceDurationMs);
+      }
+
+      const linkGroupId = hasLinkedAudio ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined;
+      const visualClipId = `clip-${crypto.randomUUID().slice(0, 8)}`;
+      const visualClip: Clip = {
+        id: visualClipId,
+        label: asset.name ?? "video",
+        assetId: asset.id,
+        startMs: insertAtMs,
+        durationMs: sourceDurationMs,
+        inMs: sourceInMs,
+        outMs: sourceInMs + sourceDurationMs,
+        mediaRole: "video",
+        linkGroupId,
+        linkLocked: Boolean(linkGroupId),
+        visual: defaultClipVisual(),
+      };
+      visualTrack.clips.push(visualClip);
+      tracks[visualTrackIndex] = { ...visualTrack, clips: sortClips(visualTrack.clips) };
+
+      if (hasLinkedAudio) {
+        const resolvedAudio = findOrCreateUnlockedTrack(tracks, "audio");
+        if (!resolvedAudio) return prev;
+        tracks = resolvedAudio.tracks;
+        let audioTrack = {
+          ...tracks[resolvedAudio.trackIndex],
+          clips: [...tracks[resolvedAudio.trackIndex].clips],
+        };
+        if (options.mode === "insert") {
+          audioTrack = applyInsertGap(audioTrack, insertAtMs, sourceDurationMs);
+        } else if (options.mode === "overwrite") {
+          audioTrack = applyOverwriteWindow(audioTrack, insertAtMs, insertAtMs + sourceDurationMs);
+        }
+        const audioClip: Clip = {
+          id: `clip-${crypto.randomUUID().slice(0, 8)}`,
+          label: `${asset.name ?? "video"} audio`,
+          assetId: asset.id,
+          startMs: insertAtMs,
+          durationMs: sourceDurationMs,
+          inMs: sourceInMs,
+          outMs: sourceInMs + sourceDurationMs,
+          mediaRole: "audio",
+          linkGroupId,
+          linkLocked: true,
+          visual: undefined,
+        };
+        audioTrack.clips.push(audioClip);
+        tracks[resolvedAudio.trackIndex] = { ...audioTrack, clips: sortClips(audioTrack.clips) };
+      }
+
+      const timelineDuration = Math.max(prev.timeline.durationMs, insertAtMs + sourceDurationMs + 1000);
+      setSelection({ trackId: tracks[visualTrackIndex].id, clipId: visualClipId });
+      setSelectedClipKeys([clipKey(tracks[visualTrackIndex].id, visualClipId)]);
+      setPlayheadMs(insertAtMs);
+      return {
+        ...prev,
+        timeline: {
+          ...prev.timeline,
+          durationMs: timelineDuration,
+          tracks,
+        },
+      };
+    });
+
+    updateSourceRangeForAsset(
+      asset.id,
+      (prev) => ({
+        ...prev,
+        inMs: resolvedWindow.points.inMs,
+        outMs: resolvedWindow.points.outMs,
+        lastPlayheadMs: clamp(Math.round(sourcePlayheadMs), 0, sourceMonitorDurationMs),
+      }),
+      sourceMonitorDurationMs,
+    );
+
+    if (options.mode === "overwrite") {
+      setLog(`Overwrite from Source: ${asset.name ?? asset.id}`);
+    } else if (options.mode === "append") {
+      setLog(`Append from Source: ${asset.name ?? asset.id}`);
+    } else {
+      setLog(`Insert from Source: ${asset.name ?? asset.id}`);
+    }
+    setExportValidationMessage(null);
+  }
+
   const addAssetToTimeline = (assetId: string, preferredTrackId?: string, preferredStartMs?: number) => {
-    const asset = project.assets.find((item) => item.id === assetId && item.kind === "video");
+    const asset = project.assets.find((item) => item.id === assetId && (item.kind === "video" || item.kind === "image"));
     if (!asset) {
       setLog("Asset not found.");
       return;
@@ -4156,7 +5202,7 @@ export default function App() {
     if (preferredTrackId) {
       const preferredTrack = project.timeline.tracks.find((track) => track.id === preferredTrackId);
       if (preferredTrack && preferredTrack.kind !== "video") {
-        setLog("Drop rejected: video assets can only be dropped on video tracks.");
+        setLog("Drop rejected: visual assets can only be dropped on video tracks.");
         return;
       }
     }
@@ -4188,14 +5234,14 @@ export default function App() {
           : visualTrack.clips.reduce((max, clip) => Math.max(max, clip.startMs + clip.durationMs), 0);
       const durationMs = Math.max(
         MIN_CLIP_DURATION_MS,
-        Math.round((asset.durationMs ?? videoDurationMs ?? 3000)),
+        Math.round((asset.durationMs ?? (asset.kind === "image" ? 3000 : videoDurationMs ?? 3000))),
       );
       const clipId = `clip-${crypto.randomUUID().slice(0, 8)}`;
-      const shouldCreateLinkedAudio = asset.hasAudio !== false;
+      const shouldCreateLinkedAudio = asset.kind === "video" && asset.hasAudio !== false;
       const linkGroupId = shouldCreateLinkedAudio ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined;
       const clip: Clip = {
         id: clipId,
-        label: asset.name ?? "video",
+        label: asset.name ?? (asset.kind === "image" ? "image" : "video"),
         assetId: asset.id,
         startMs: nextStartMs,
         durationMs,
@@ -4280,11 +5326,84 @@ export default function App() {
   };
 
   const onSourceMetadataLoaded = (durationMs: number) => {
-    setSourceDurationMs(durationMs);
-    if (sourcePlayheadMs > durationMs) {
-      setSourcePlayheadMs(durationMs);
+    if (Number.isFinite(durationMs) && durationMs > 0) {
+      const rounded = Math.round(durationMs);
+      setSourceDurationMs(rounded);
+      if (sourcePlayheadMs > rounded) {
+        setSourcePlayheadMs(rounded);
+      }
+      if (devMode) {
+        console.debug(`[MAV] Source metadata loaded: ${rounded}ms`);
+      }
+      return;
+    }
+
+    const fallbackAsset = activeAssetId
+      ? project.assets.find((asset) => asset.id === activeAssetId && asset.kind === "video")
+      : null;
+    const fallbackDuration =
+      typeof fallbackAsset?.durationMs === "number" && Number.isFinite(fallbackAsset.durationMs) && fallbackAsset.durationMs > 0
+        ? Math.round(fallbackAsset.durationMs)
+        : 1000;
+    setSourceDurationMs(fallbackDuration);
+    setSourcePlayheadMs((prev) => clamp(prev, 0, fallbackDuration));
+    if (devMode) {
+      console.debug(`[MAV] Source duration fallback used: ${fallbackDuration}ms`);
     }
   };
+
+  function insertFromSourceMonitor(mode: "insert" | "overwrite" | "append") {
+    if (!activeAssetId) {
+      setLog("Open a source clip first.");
+      return;
+    }
+    insertSourceRangeToTimeline({ assetId: activeAssetId, mode });
+  }
+
+  function onSourceRangeDragStart(event: ReactDragEvent<HTMLElement>) {
+    if (!activeAssetId) {
+      event.preventDefault();
+      return;
+    }
+    const asset = project.assets.find((entry) => entry.id === activeAssetId);
+    if (!asset || asset.kind !== "video") {
+      event.preventDefault();
+      return;
+    }
+    const durationHint =
+      typeof asset.durationMs === "number" && Number.isFinite(asset.durationMs) && asset.durationMs > 0
+        ? Math.round(asset.durationMs)
+        : sourceMonitorDurationMs;
+    const windowRange = resolveSourceWindow(sourceRangesByAsset[asset.id], durationHint);
+    const payload = {
+      assetId: asset.id,
+      inMs: windowRange.inMs,
+      outMs: windowRange.outMs,
+      durationMs: windowRange.durationMs,
+      hasAudio: asset.hasAudio !== false,
+    };
+    const dragBadge = document.createElement("div");
+    dragBadge.textContent = "Clip";
+    dragBadge.style.position = "fixed";
+    dragBadge.style.top = "-1000px";
+    dragBadge.style.left = "-1000px";
+    dragBadge.style.padding = "6px 10px";
+    dragBadge.style.borderRadius = "8px";
+    dragBadge.style.background = "#1f4f85";
+    dragBadge.style.border = "1px solid #4cb0ff";
+    dragBadge.style.color = "#eaf4ff";
+    dragBadge.style.font = "600 12px/1 system-ui";
+    dragBadge.style.pointerEvents = "none";
+    document.body.appendChild(dragBadge);
+    event.dataTransfer.setDragImage(dragBadge, 16, 12);
+    window.setTimeout(() => {
+      dragBadge.remove();
+    }, 0);
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("text/x-mav-source-range", JSON.stringify(payload));
+    event.dataTransfer.setData("text/plain", asset.id);
+    setLog("Drag source range to a video track.");
+  }
 
   const zoomWidthPx = Math.max(
     960,
@@ -4399,6 +5518,10 @@ export default function App() {
   return (
     <>
       <EditorShell
+        layout={editorLayout}
+        onResizeLayout={resizeEditorLayout}
+        onResizeLayoutCommit={commitEditorLayout}
+        isDesktopResizable={isDesktopResizable}
         toolbar={(
           <TopToolbar
             projectName={project.meta.projectId}
@@ -4412,6 +5535,7 @@ export default function App() {
             }}
             onSave={saveProject}
             onLoad={loadProject}
+            onResetLayout={resetEditorLayout}
             onOpenAbout={() => setAboutOpen(true)}
             canShowDiagnostics={devMode}
             diagnosticsVisible={diagnosticsVisible}
@@ -4440,6 +5564,14 @@ export default function App() {
                 }}
                 onActivateAsset={(assetId) => {
                   void onActivateAsset(assetId);
+                }}
+                onOpenInSourceMonitor={(assetId) => {
+                  void (async () => {
+                    const opened = await onActivateAsset(assetId);
+                    if (opened) {
+                      setPreviewMonitorMode("source");
+                    }
+                  })();
                 }}
                 onAddToTimeline={(assetId) => addAssetToTimeline(assetId)}
                 onAssetDragStart={(assetId) => {
@@ -4476,7 +5608,18 @@ export default function App() {
             sourcePlayheadMs={sourcePlayheadMs}
             sourceDurationMs={sourceMonitorDurationMs}
             sourceIsPlaying={sourceIsPlaying}
+            monitorMode={previewMonitorMode}
+            onMonitorModeChange={setPreviewMonitorMode}
             onSourceTogglePlay={toggleSourcePlayback}
+            sourceRangeInMs={resolvedActiveSourceRange.points.inMs}
+            sourceRangeOutMs={resolvedActiveSourceRange.points.outMs}
+            onSetSourceIn={setSourceInAtPlayhead}
+            onSetSourceOut={setSourceOutAtPlayhead}
+            onClearSourceRange={clearSourceRange}
+            onInsertFromSource={() => insertFromSourceMonitor("insert")}
+            onOverwriteFromSource={() => insertFromSourceMonitor("overwrite")}
+            onAppendFromSource={() => insertFromSourceMonitor("append")}
+            onSourceRangeDragStart={onSourceRangeDragStart}
             onSourceScrub={(value) => {
               setSourceIsPlaying(false);
               setSourcePlayheadMs(clamp(Math.round(value), 0, sourceMonitorDurationMs));
@@ -4538,9 +5681,23 @@ export default function App() {
             onSplit={splitSelected}
             onDelete={removeSelected}
             getClipRenderState={getClipRenderState}
+            interactionPreview={interactionPreview}
             onClipPointerDown={onClipPointerDown}
             onAssetDrop={(assetId, trackId, startMs) => {
               addAssetToTimeline(assetId, trackId, startMs);
+            }}
+            onSourceRangeDrop={(payload, trackId, startMs) => {
+              insertSourceRangeToTimeline({
+                assetId: payload.assetId,
+                mode: "insert",
+                targetTrackId: trackId,
+                targetStartMs: startMs,
+                inMs: payload.inMs,
+                outMs: payload.outMs,
+              });
+            }}
+            onAssetDropToNewTrack={(assetId, trackKind, startMs) => {
+              addAssetToNewTrack(assetId, trackKind, startMs);
             }}
             onSelectClipKeys={setSelectionFromKeys}
             onClearSelection={() => setSelectionFromKeys([])}
