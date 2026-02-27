@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import type { IntentContract, IntentRenderState } from "../../ai-generation/types";
 
-type Clip = {
+type ClipBase = {
   id: string;
   label: string;
-  assetId: string;
+  assetId: string | null;
   startMs: number;
   durationMs: number;
   inMs: number;
@@ -12,6 +13,20 @@ type Clip = {
   linkGroupId?: string;
   linkLocked?: boolean;
 };
+
+type MediaClip = ClipBase & {
+  type?: "media";
+  assetId: string;
+};
+
+type IntentClip = ClipBase & {
+  type: "intent";
+  assetId: string | null;
+  intent: IntentContract;
+  intentRender: IntentRenderState;
+};
+
+type Clip = MediaClip | IntentClip;
 
 type Track = {
   id: string;
@@ -63,6 +78,12 @@ type SourceRangeDropPayload = {
   hasAudio: boolean;
 };
 
+type IntentTemplateDragPayload = {
+  kind: "hook" | "scene" | "outro" | "vo" | "music" | "sfx";
+  label?: string;
+  durationMs?: number;
+};
+
 type AssetDragPayload = {
   assetId: string;
   kind?: "video" | "audio" | "image";
@@ -104,8 +125,20 @@ type TimelinePanelProps = {
   interactionPreview: InteractionPreview;
   onClipPointerDown: (event: React.PointerEvent<HTMLButtonElement>, trackId: string, clip: Clip) => void;
   onAssetDrop: (assetId: string, trackId: string, startMs: number, durationHintMs?: number) => void;
+  onIntentDrop: (
+    kind: IntentTemplateDragPayload["kind"],
+    trackId: string,
+    startMs: number,
+    durationHintMs?: number,
+  ) => void;
   onSourceRangeDrop: (payload: SourceRangeDropPayload, trackId: string, startMs: number) => void;
   onAssetDropToNewTrack: (assetId: string, trackKind: "video" | "audio", startMs: number, durationHintMs?: number) => void;
+  onIntentDropToNewTrack: (
+    kind: IntentTemplateDragPayload["kind"],
+    trackKind: "video" | "audio",
+    startMs: number,
+    durationHintMs?: number,
+  ) => void;
   onSelectClipKeys: (keys: string[], primary?: { trackId: string; clipId: string } | null) => void;
   onClearSelection: () => void;
   onSplitClip: (trackId: string, clipId: string) => void;
@@ -113,12 +146,15 @@ type TimelinePanelProps = {
   onDuplicateClip: (trackId: string, clipId: string) => void;
   onDetachAudio: (trackId: string, clipId: string) => void;
   onRelinkClip: (trackId: string, clipId: string) => void;
+  onOpenIntentComposer: (trackId: string, clipId: string) => void;
+  onRetryIntentRender: (trackId: string, clipId: string) => void;
   onAddTrack: (kind: "video" | "overlay" | "audio") => void;
   onRemoveTrack: (trackId: string) => void;
   onToggleTrackFlag: (trackId: string, key: "muted" | "locked" | "visible") => void;
   onDropRejected: (message: string) => void;
   assetMap: Map<string, AssetMeta>;
   activeAssetDrag: AssetDragPayload | null;
+  activeIntentDrag: IntentTemplateDragPayload | null;
 };
 
 type Marquee = {
@@ -159,6 +195,23 @@ function formatRulerTime(ms: number) {
   return `${minutes}:${seconds}`;
 }
 
+function intentIcon(kind: "hook" | "scene" | "outro" | "vo" | "music" | "sfx"): string {
+  if (kind === "hook") return "⚡";
+  if (kind === "scene") return "🎬";
+  if (kind === "outro") return "🏁";
+  if (kind === "vo") return "🎙";
+  if (kind === "music") return "🎵";
+  return "🔊";
+}
+
+function statusClass(status: "draft" | "queued" | "generating" | "ready" | "failed"): string {
+  if (status === "queued") return "intentQueued";
+  if (status === "generating") return "intentGenerating";
+  if (status === "ready") return "intentReady";
+  if (status === "failed") return "intentFailed";
+  return "intentDraft";
+}
+
 function parseSourceRangePayload(raw: string): SourceRangeDropPayload | null {
   if (!raw) return null;
   try {
@@ -196,6 +249,34 @@ function parseAssetDragPayload(raw: string): AssetDragPayload | null {
           ? Math.max(0, Math.round(parsed.durationMs))
           : undefined,
       hasAudio: typeof parsed.hasAudio === "boolean" ? parsed.hasAudio : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseIntentTemplateDragPayload(raw: string): IntentTemplateDragPayload | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<IntentTemplateDragPayload>;
+    const kind = parsed.kind;
+    if (
+      kind !== "hook" &&
+      kind !== "scene" &&
+      kind !== "outro" &&
+      kind !== "vo" &&
+      kind !== "music" &&
+      kind !== "sfx"
+    ) {
+      return null;
+    }
+    return {
+      kind,
+      label: typeof parsed.label === "string" ? parsed.label : undefined,
+      durationMs:
+        typeof parsed.durationMs === "number" && Number.isFinite(parsed.durationMs)
+          ? Math.max(0, Math.round(parsed.durationMs))
+          : undefined,
     };
   } catch {
     return null;
@@ -242,8 +323,10 @@ export function TimelinePanel({
   interactionPreview,
   onClipPointerDown,
   onAssetDrop,
+  onIntentDrop,
   onSourceRangeDrop,
   onAssetDropToNewTrack,
+  onIntentDropToNewTrack,
   onSelectClipKeys,
   onClearSelection,
   onSplitClip,
@@ -251,12 +334,15 @@ export function TimelinePanel({
   onDuplicateClip,
   onDetachAudio,
   onRelinkClip,
+  onOpenIntentComposer,
+  onRetryIntentRender,
   onAddTrack,
   onRemoveTrack,
   onToggleTrackFlag,
   onDropRejected,
   assetMap,
   activeAssetDrag,
+  activeIntentDrag,
 }: TimelinePanelProps) {
   const visibleTracks = useMemo(() => tracks.filter((track) => track.kind !== "overlay"), [tracks]);
   const selected = new Set(selectedClipKeys);
@@ -397,6 +483,7 @@ export function TimelinePanel({
   const resolveDropCompatibility = (
     sourceRange: SourceRangeDropPayload | null,
     dragAsset: AssetDragPayload | null,
+    intentTemplate: IntentTemplateDragPayload | null,
     lane: Track | undefined,
     outOfBounds: "above" | "below" | null,
   ) => {
@@ -418,6 +505,34 @@ export function TimelinePanel({
       return {
         compatible: true,
         message: `Insert source range on ${trackDisplayName(lane, visibleTracks)}`,
+        createTrackKind: undefined,
+      };
+    }
+
+    if (intentTemplate) {
+      const intentNeedsAudio =
+        intentTemplate.kind === "vo" || intentTemplate.kind === "music" || intentTemplate.kind === "sfx";
+      const expectedTrackKind: "video" | "audio" = intentNeedsAudio ? "audio" : "video";
+      if (!lane && outOfBounds) {
+        return {
+          compatible: true,
+          message: `Drop to create a new ${expectedTrackKind} track`,
+          createTrackKind: expectedTrackKind,
+        };
+      }
+      if (!lane) {
+        return { compatible: false, message: "No target track.", createTrackKind: undefined };
+      }
+      if (lane.kind !== expectedTrackKind) {
+        return {
+          compatible: false,
+          message: expectedTrackKind === "video" ? "Intent video only on video tracks." : "Intent audio only on audio tracks.",
+          createTrackKind: undefined,
+        };
+      }
+      return {
+        compatible: true,
+        message: `Drop on ${trackDisplayName(lane, visibleTracks)}`,
         createTrackKind: undefined,
       };
     }
@@ -772,8 +887,15 @@ export function TimelinePanel({
             onDragOver={(event) => {
               event.preventDefault();
               const sourceRange = parseSourceRangePayload(event.dataTransfer.getData("text/x-mav-source-range"));
-              const fallbackAssetId =
+              const intentTemplate =
+                parseIntentTemplateDragPayload(event.dataTransfer.getData("text/x-mav-intent-template")) ??
+                activeIntentDrag;
+              const fallbackAssetIdRaw =
                 event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
+              const fallbackAssetId =
+                fallbackAssetIdRaw && !fallbackAssetIdRaw.startsWith("intent:")
+                  ? fallbackAssetIdRaw
+                  : "";
               const dragAsset: AssetDragPayload | null =
                 parseAssetDragPayload(event.dataTransfer.getData("text/x-mav-asset-meta")) ??
                 activeAssetDrag ??
@@ -782,6 +904,7 @@ export function TimelinePanel({
               const { compatible, message, createTrackKind } = resolveDropCompatibility(
                 sourceRange,
                 dragAsset,
+                intentTemplate,
                 lane,
                 outOfBounds,
               );
@@ -795,13 +918,16 @@ export function TimelinePanel({
                     : undefined;
                 const fallbackDurationMs =
                   sourceRange?.durationMs ??
+                  intentTemplate?.durationMs ??
                   dragAsset?.durationMs ??
                   asset?.durationMs ??
                   (asset?.kind === "image" || dragAsset?.kind === "image" ? 3000 : 3000);
                 const showLinkedAudioGhost =
                   sourceRange != null
                     ? sourceRange.hasAudio
-                    : (asset?.kind ?? dragAsset?.kind) === "video" &&
+                    : intentTemplate != null
+                      ? false
+                      : (asset?.kind ?? dragAsset?.kind) === "video" &&
                       (typeof asset?.hasAudio === "boolean" ? asset.hasAudio : dragAsset?.hasAudio) !== false;
                 setDragLane({
                   trackId: lane?.id ?? `new-track-${createTrackKind ?? "video"}`,
@@ -812,6 +938,8 @@ export function TimelinePanel({
                   label:
                     sourceRange != null
                       ? `Source: ${asset?.name ?? sourceRange.assetId}`
+                      : intentTemplate != null
+                        ? `Intent: ${intentTemplate.label ?? intentTemplate.kind.toUpperCase()}`
                       : asset?.name ??
                         (asset?.kind === "image" || dragAsset?.kind === "image"
                           ? "image"
@@ -838,8 +966,15 @@ export function TimelinePanel({
               setDragOver(false);
               setDragLane(null);
               const sourceRange = parseSourceRangePayload(event.dataTransfer.getData("text/x-mav-source-range"));
-              const fallbackAssetId =
+              const intentTemplate =
+                parseIntentTemplateDragPayload(event.dataTransfer.getData("text/x-mav-intent-template")) ??
+                activeIntentDrag;
+              const fallbackAssetIdRaw =
                 event.dataTransfer.getData("text/x-mav-asset-id") || event.dataTransfer.getData("text/plain");
+              const fallbackAssetId =
+                fallbackAssetIdRaw && !fallbackAssetIdRaw.startsWith("intent:")
+                  ? fallbackAssetIdRaw
+                  : "";
               const dragAsset: AssetDragPayload | null =
                 parseAssetDragPayload(event.dataTransfer.getData("text/x-mav-asset-meta")) ??
                 activeAssetDrag ??
@@ -848,6 +983,7 @@ export function TimelinePanel({
               const { compatible, message, createTrackKind } = resolveDropCompatibility(
                 sourceRange,
                 dragAsset,
+                intentTemplate,
                 lane,
                 outOfBounds,
               );
@@ -862,6 +998,25 @@ export function TimelinePanel({
                 }
                 onSourceRangeDrop(sourceRange, lane.id, startMs);
                 return;
+              }
+              if (intentTemplate) {
+                const durationHintMs = (() => {
+                  if (dropPreview && dropPreview.compatible) {
+                    return Math.max(0, Math.round(dropPreview.durationMs));
+                  }
+                  if (typeof intentTemplate.durationMs === "number" && Number.isFinite(intentTemplate.durationMs)) {
+                    return Math.max(0, Math.round(intentTemplate.durationMs));
+                  }
+                  return undefined;
+                })();
+                if (lane) {
+                  onIntentDrop(intentTemplate.kind, lane.id, startMs, durationHintMs);
+                  return;
+                }
+                if (createTrackKind) {
+                  onIntentDropToNewTrack(intentTemplate.kind, createTrackKind, startMs, durationHintMs);
+                  return;
+                }
               }
               const assetId = dragAsset?.assetId ?? "";
               if (!assetId) return;
@@ -897,7 +1052,7 @@ export function TimelinePanel({
             {snapGuideMs != null ? (
               <div className="snapGuide" style={{ left: `${(snapGuideMs / 1000) * pixelsPerSecond}px` }} />
             ) : null}
-            {!hasAnyClip ? <div className="timelineEmptyState">Drag media here to start.</div> : null}
+            {!hasAnyClip ? <div className="timelineEmptyState">Drag media or intent blocks here to start.</div> : null}
             {dragOver ? <div className="timelineDropState">{dragLane?.message ?? "Drop to add clip."}</div> : null}
 
             {visibleTracks.map((track, rowIndex) => {
@@ -913,7 +1068,7 @@ export function TimelinePanel({
                 >
                   {track.clips.map((sourceClip) => {
                     const clip = getClipRenderState(track.id, sourceClip);
-                    const asset = assetMap.get(sourceClip.assetId);
+                    const asset = sourceClip.assetId ? assetMap.get(sourceClip.assetId) : undefined;
                     const widthPx = Math.max(24, (clip.durationMs / 1000) * pixelsPerSecond);
                     const isSelected = selected.has(`${track.id}:${sourceClip.id}`);
                     const isPrimary = selection?.trackId === track.id && selection?.clipId === sourceClip.id;
@@ -921,6 +1076,12 @@ export function TimelinePanel({
                     const tileCount = Math.max(1, Math.ceil(widthPx / 42));
                     const waveform = asset?.waveform ?? [];
                     const isAudioClip = track.kind === "audio" || asset?.kind === "audio";
+                    const isIntent = clip.type === "intent" && Boolean(clip.intent && clip.intentRender);
+                    const intentStatus = isIntent ? clip.intentRender?.status ?? "draft" : "draft";
+                    const intentVersion = isIntent ? clip.intentRender?.activeVersionId : null;
+                    const intentProgress = isIntent ? Math.max(0, Math.min(100, clip.intentRender?.progressPct ?? 0)) : 0;
+                    const intentKind = isIntent ? clip.intent?.blockKind ?? "scene" : "scene";
+                    const intentPrompt = isIntent ? clip.intent?.prompt ?? "" : "";
                     const waveformBars = Math.max(12, Math.floor(Math.max(24, widthPx - 8) / 2));
                     const waveformSourceDurationMs = Math.max(
                       1,
@@ -951,6 +1112,11 @@ export function TimelinePanel({
                           event.stopPropagation();
                           onClipPointerDown(event, track.id, sourceClip);
                         }}
+                        onDoubleClick={() => {
+                          if (isIntent) {
+                            onOpenIntentComposer(track.id, sourceClip.id);
+                          }
+                        }}
                         onContextMenu={(event) => {
                           event.preventDefault();
                           setContextMenu({
@@ -961,7 +1127,7 @@ export function TimelinePanel({
                           });
                         }}
                       >
-                        {showFilmstrip && track.kind === "video" && filmstripTiles.length > 0 ? (
+                        {!isIntent && showFilmstrip && track.kind === "video" && filmstripTiles.length > 0 ? (
                           <span className="clipFilmstrip" aria-hidden>
                             {Array.from({ length: tileCount }).map((_, index) => (
                               <img
@@ -972,7 +1138,7 @@ export function TimelinePanel({
                             ))}
                           </span>
                         ) : null}
-                        {isAudioClip && waveform.length > 0 ? (
+                        {!isIntent && isAudioClip && waveform.length > 0 ? (
                           <span className="clipWaveform" aria-hidden>
                             {Array.from({ length: waveformBars }).map((_, index) => {
                               const positionRatio = index / Math.max(1, waveformBars - 1);
@@ -987,7 +1153,40 @@ export function TimelinePanel({
                           </span>
                         ) : null}
                         <span className="clipHandle left" />
-                        <span className="clipLabel">{clip.label}</span>
+                        {isIntent ? (
+                          <span className={`intentClipBody ${statusClass(intentStatus)}`}>
+                            <span className="intentClipTitle">
+                              <span className="intentIcon" aria-hidden>{intentIcon(intentKind)}</span>
+                              <span>{clip.intent?.title ?? clip.label}</span>
+                            </span>
+                            <span className="intentClipPrompt">{intentPrompt || "Intent block"}</span>
+                            <span className="intentClipBadges">
+                              <i>{Math.max(1, Math.round(clip.durationMs / 1000))}s</i>
+                              <i>{clip.intent?.output.aspectRatio ?? "16:9"}</i>
+                              <i>{intentVersion ?? "V0"}</i>
+                              <i>{intentStatus}</i>
+                            </span>
+                            {intentStatus === "generating" ? (
+                              <span className="intentProgressBar">
+                                <span style={{ width: `${intentProgress}%` }} />
+                              </span>
+                            ) : null}
+                            {intentStatus === "failed" ? (
+                              <span
+                                className="intentRetryBtn"
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                  onRetryIntentRender(track.id, sourceClip.id);
+                                }}
+                              >
+                                Retry
+                              </span>
+                            ) : null}
+                            {clip.intentRender?.hasDraftChanges ? <span className="intentDraftBadge">Draft changes</span> : null}
+                          </span>
+                        ) : (
+                          <span className="clipLabel">{clip.label}</span>
+                        )}
                         <span className="clipHandle right" />
                       </button>
                     );

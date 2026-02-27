@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent as ReactDragEvent } from "react";
-import projectSchema from "../contracts/project.schema.v2.json";
+import projectSchema from "../contracts/project.schema.v3.json";
 import type {
   DecodeWorkerInMessage,
   DecodeWorkerOutMessage,
@@ -20,22 +20,26 @@ import { DiagnosticsPanel } from "./components/Diagnostics/DiagnosticsPanel";
 import { ExportModal } from "./components/Export/ExportModal";
 import { analyzeMediaFile, captureQuickVideoThumbnail } from "./preview/media-analysis";
 import {
-  AI_GENERATION_HISTORY_LIMIT,
-  AI_PROMPT_HISTORY_LIMIT,
   createDefaultAIGenerationState,
-  normalizeAIGenConfig,
+  createDefaultIntentContract,
+  createDefaultIntentRenderState,
+  INTENT_CREATE_TEMPLATES,
   normalizeAIGenerationState,
+  normalizeIntentRenderState,
 } from "./ai-generation/defaults";
-import { buildEffectiveConfig, ensureModelForEngine } from "./ai-generation/capabilities";
-import { buildMentionCandidates } from "./ai-generation/mentions";
-import { readAIGenPresets, removeAIGenPreset, saveAIGenPreset } from "./ai-generation/storage";
 import type {
-  AIGenConfig,
-  AIGenPreset,
   AIGenRightSidebarTab,
   AIGenerationState,
   AIGenerationSourceContext,
+  IntentBankRef,
+  IntentBlockKind,
+  IntentContract,
+  IntentFrameRef,
+  IntentRefStrength,
+  IntentRenderState,
+  IntentRenderVersion,
 } from "./ai-generation/types";
+import { IntentRenderQueue } from "./ai-generation/intent-render-queue";
 import {
   runSilenceCutPlugin,
   type SilenceCutPluginInput,
@@ -64,10 +68,10 @@ type ClipVisual = {
 
 type ClipMediaRole = "video" | "audio" | "overlay";
 
-type Clip = {
+type ClipBase = {
   id: string;
   label: string;
-  assetId: string;
+  assetId: string | null;
   startMs: number;
   durationMs: number;
   inMs: number;
@@ -79,6 +83,24 @@ type Clip = {
   transform?: OverlayTransform;
 };
 
+type MediaClip = ClipBase & {
+  type?: "media";
+  assetId: string;
+};
+
+type IntentClip = ClipBase & {
+  type: "intent";
+  assetId: string | null;
+  intent: IntentContract;
+  intentRender: IntentRenderState;
+};
+
+type Clip = MediaClip | IntentClip;
+
+function isIntentClip(clip: Clip): clip is IntentClip {
+  return clip.type === "intent";
+}
+
 type Track = {
   id: string;
   kind: TrackKind;
@@ -89,7 +111,7 @@ type Track = {
 };
 
 type ProjectState = {
-  schemaVersion: "mav.project.v0" | "mav.project.v1" | "mav.project.v2";
+  schemaVersion: "mav.project.v0" | "mav.project.v1" | "mav.project.v2" | "mav.project.v3";
   meta: {
     projectId: string;
     createdAt: string;
@@ -149,6 +171,12 @@ type AssetDragContext = {
   kind: "video" | "audio" | "image";
   durationMs?: number;
   hasAudio?: boolean;
+};
+
+type IntentTemplateDragContext = {
+  kind: IntentBlockKind;
+  label: string;
+  durationMs: number;
 };
 
 type InteractionPreviewGhost = {
@@ -374,6 +402,7 @@ const EXPORT_SESSION_KEY = "mav.poc.editor.export-session.v1";
 const EDITOR_LAYOUT_STORAGE_KEY = "mav.editor.layout.v1";
 const RIGHT_SIDEBAR_TAB_STORAGE_KEY = "mav.editor.right-tab.v1";
 const SOURCE_RANGE_STORAGE_KEY = "mav.source.ranges.v1";
+const INTENT_TIMELINE_FLAG_KEY = "mav.intentTimelineV1";
 const MIN_CLIP_DURATION_MS = 100;
 const DEFAULT_QA_SCENARIOS = 50;
 const HISTORY_LIMIT = 80;
@@ -796,7 +825,7 @@ function normalizeClipVisual(trackKind: TrackKind, clip: Clip): ClipVisual | und
 function createInitialProject(): ProjectState {
   const now = new Date().toISOString();
   return {
-    schemaVersion: "mav.project.v2",
+    schemaVersion: "mav.project.v3",
     meta: {
       projectId: "poc-project",
       createdAt: now,
@@ -839,6 +868,69 @@ function createInitialProject(): ProjectState {
   };
 }
 
+function normalizeIntentContract(input: Partial<IntentContract> | undefined, fallbackKind: IntentBlockKind): IntentContract {
+  const defaults = createDefaultIntentContract(fallbackKind);
+  if (!input) return defaults;
+  return {
+    ...defaults,
+    ...input,
+    blockKind: input.blockKind ?? fallbackKind,
+    title: input.title?.trim() ? input.title : defaults.title,
+    prompt: input.prompt ?? defaults.prompt,
+    negativePrompt: input.negativePrompt ?? defaults.negativePrompt,
+    firstFrame: input.firstFrame ?? defaults.firstFrame,
+    endFrame: input.endFrame ?? defaults.endFrame,
+    characterRefs: Array.isArray(input.characterRefs) ? input.characterRefs : defaults.characterRefs,
+    objectRefs: Array.isArray(input.objectRefs) ? input.objectRefs : defaults.objectRefs,
+    output: {
+      ...defaults.output,
+      ...(input.output ?? {}),
+    },
+    motion: {
+      ...defaults.motion,
+      ...(input.motion ?? {}),
+    },
+    audio: {
+      ...defaults.audio,
+      ...(input.audio ?? {}),
+    },
+    anglePreset: input.anglePreset ?? defaults.anglePreset,
+    matchLensAndLighting:
+      typeof input.matchLensAndLighting === "boolean" ? input.matchLensAndLighting : defaults.matchLensAndLighting,
+  };
+}
+
+function normalizeClipForTrack(track: Track, clip: Clip): Clip {
+  const base: ClipBase = {
+    ...clip,
+    assetId: clip.assetId ?? null,
+    startMs: Math.round(clip.startMs),
+    durationMs: Math.round(clip.durationMs),
+    inMs: Math.round(clip.inMs),
+    outMs: Math.round(clip.outMs),
+    mediaRole: clip.mediaRole ?? toMediaRole(track.kind),
+    linkGroupId: clip.linkGroupId,
+    linkLocked: clip.linkGroupId ? clip.linkLocked !== false : false,
+    visual: normalizeClipVisual(track.kind, clip),
+  };
+
+  if (clip.type === "intent") {
+    return {
+      ...base,
+      type: "intent",
+      assetId: base.assetId,
+      intent: normalizeIntentContract(clip.intent, "scene"),
+      intentRender: normalizeIntentRenderState(clip.intentRender),
+    };
+  }
+
+  return {
+    ...base,
+    type: "media",
+    assetId: typeof base.assetId === "string" ? base.assetId : "",
+  };
+}
+
 function normalizeProject(project: ProjectState): ProjectState {
   const tracks = orderTracksStrict(
     [...project.timeline.tracks]
@@ -850,17 +942,7 @@ function normalizeProject(project: ProjectState): ProjectState {
       visible: (track as { visible?: unknown }).visible !== false,
       clips: [...track.clips]
         .sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id))
-        .map((clip) => ({
-          ...clip,
-          startMs: Math.round(clip.startMs),
-          durationMs: Math.round(clip.durationMs),
-          inMs: Math.round(clip.inMs),
-          outMs: Math.round(clip.outMs),
-          mediaRole: clip.mediaRole ?? toMediaRole(track.kind),
-          linkGroupId: clip.linkGroupId,
-          linkLocked: clip.linkGroupId ? clip.linkLocked !== false : false,
-          visual: normalizeClipVisual(track.kind, clip),
-        })),
+        .map((clip) => normalizeClipForTrack(track, clip)),
     }))
   );
 
@@ -882,14 +964,10 @@ function normalizeProject(project: ProjectState): ProjectState {
       : 0;
   const durationMs = Math.max(1000, requestedDurationMs, maxClipEndMs);
   const normalizedAIGeneration = normalizeAIGenerationState(project.aiGeneration);
-  const ensuredModelId = ensureModelForEngine(
-    normalizedAIGeneration.current.engine.engineId,
-    normalizedAIGeneration.current.engine.modelId,
-  );
 
   return {
     ...project,
-    schemaVersion: "mav.project.v2",
+    schemaVersion: "mav.project.v3",
     meta: {
       ...project.meta,
       updatedAt: new Date().toISOString(),
@@ -899,16 +977,7 @@ function normalizeProject(project: ProjectState): ProjectState {
       durationMs,
       tracks,
     },
-    aiGeneration: {
-      ...normalizedAIGeneration,
-      current: normalizeAIGenConfig({
-        ...normalizedAIGeneration.current,
-        engine: {
-          ...normalizedAIGeneration.current.engine,
-          modelId: ensuredModelId,
-        },
-      }),
-    },
+    aiGeneration: normalizedAIGeneration,
   };
 }
 
@@ -921,13 +990,22 @@ function findClip(project: ProjectState, selection: Selection | null) {
   return { trackIndex, clipIndex };
 }
 
-function resolveVisualAsset(project: ProjectState, assetId: string): (Asset & { kind: "video" | "image" }) | null {
+function resolveVisualAsset(project: ProjectState, assetId: string | null): (Asset & { kind: "video" | "image" }) | null {
+  if (!assetId) return null;
   return (
     project.assets.find(
       (entry): entry is Asset & { kind: "video" | "image" } =>
         entry.id === assetId && (entry.kind === "video" || entry.kind === "image"),
     ) ?? null
   );
+}
+
+function resolveClipVisualAssetId(clip: Clip): string | null {
+  if (clip.type === "intent") {
+    const active = clip.intentRender.versions.find((version) => version.id === clip.intentRender.activeVersionId);
+    return active?.outputAssetId ?? null;
+  }
+  return clip.assetId;
 }
 
 function findProgramStackAtMs(project: ProjectState, playheadMs: number): ProgramClipContext[] {
@@ -944,14 +1022,15 @@ function findProgramStackAtMs(project: ProjectState, playheadMs: number): Progra
 
       const role = effectiveClipRole(track.kind, clip);
       if (role === "audio") continue;
-      const asset = resolveVisualAsset(project, clip.assetId);
+      const resolvedAssetId = resolveClipVisualAssetId(clip);
+      const asset = resolveVisualAsset(project, resolvedAssetId);
       if (!asset?.url) continue;
       const localMs = clamp(Math.round(clip.inMs + (playheadMs - clipStartMs)), clip.inMs, clip.outMs);
       stack.push({
         trackId: track.id,
         clipId: clip.id,
         role,
-        assetId: clip.assetId,
+        assetId: resolvedAssetId ?? "",
         assetKind: asset.kind,
         assetUrl: asset.url,
         trackOrder,
@@ -997,7 +1076,8 @@ function findNextProgramClipOnTrack(project: ProjectState, current: ProgramClipC
 
   const role = effectiveClipRole(track.kind, nextClip);
   if (role !== "video") return null;
-  const asset = resolveVisualAsset(project, nextClip.assetId);
+  const resolvedAssetId = resolveClipVisualAssetId(nextClip);
+  const asset = resolveVisualAsset(project, resolvedAssetId);
   if (!asset || asset.kind !== "video") return null;
   if (!asset?.url) return null;
   const trackOrder = project.timeline.tracks.findIndex((entry) => entry.id === track.id);
@@ -1005,7 +1085,7 @@ function findNextProgramClipOnTrack(project: ProjectState, current: ProgramClipC
     trackId: track.id,
     clipId: nextClip.id,
     role,
-    assetId: nextClip.assetId,
+    assetId: resolvedAssetId ?? "",
     assetKind: asset.kind,
     assetUrl: asset.url,
     trackOrder: trackOrder < 0 ? 0 : trackOrder,
@@ -1057,6 +1137,85 @@ function drawVideoFrameOnCanvas(canvas: HTMLCanvasElement, source: CanvasImageSo
   ctx.restore();
 }
 
+function drawImageSourceOnCanvas(canvas: HTMLCanvasElement, source: CanvasImageSource) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.save();
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+function drawIntentPlaceholderOnCanvas(
+  canvas: HTMLCanvasElement,
+  options: { title: string; status: string; progressPct: number },
+) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const roundedRectPath = (x: number, y: number, width: number, height: number, radius: number) => {
+    const r = Math.max(0, Math.min(radius, Math.min(width, height) / 2));
+    if ("roundRect" in ctx && typeof ctx.roundRect === "function") {
+      ctx.beginPath();
+      ctx.roundRect(x, y, width, height, r);
+      return;
+    }
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + width - r, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+    ctx.lineTo(x + width, y + height - r);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+    ctx.lineTo(x + r, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+  };
+
+  const progress = clamp(Math.round(options.progressPct), 0, 100);
+  const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+  gradient.addColorStop(0, "#15314c");
+  gradient.addColorStop(1, "#1f4f79");
+  ctx.save();
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const cardW = Math.round(canvas.width * 0.56);
+  const cardH = Math.round(canvas.height * 0.26);
+  const cardX = Math.round((canvas.width - cardW) / 2);
+  const cardY = Math.round((canvas.height - cardH) / 2);
+  ctx.fillStyle = "rgba(10, 19, 33, 0.56)";
+  ctx.strokeStyle = "rgba(122, 196, 255, 0.62)";
+  ctx.lineWidth = 1.5;
+  roundedRectPath(cardX, cardY, cardW, cardH, 14);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#e6f4ff";
+  ctx.font = "700 26px ui-sans-serif, system-ui";
+  ctx.fillText(options.title || "Intent block", cardX + 20, cardY + 52);
+  ctx.font = "500 17px ui-sans-serif, system-ui";
+  ctx.fillStyle = "#bcd8f4";
+  ctx.fillText(`Status: ${options.status}`, cardX + 20, cardY + 86);
+
+  const barX = cardX + 20;
+  const barY = cardY + cardH - 38;
+  const barW = cardW - 40;
+  const barH = 12;
+  ctx.fillStyle = "rgba(31, 52, 74, 0.95)";
+  roundedRectPath(barX, barY, barW, barH, 999);
+  ctx.fill();
+  const fillW = Math.max(6, Math.round((barW * progress) / 100));
+  const barGradient = ctx.createLinearGradient(barX, barY, barX + fillW, barY);
+  barGradient.addColorStop(0, "#55b7ff");
+  barGradient.addColorStop(1, "#87ddff");
+  ctx.fillStyle = barGradient;
+  roundedRectPath(barX, barY, fillW, barH, 999);
+  ctx.fill();
+  ctx.restore();
+}
+
 function clearPreviewCanvas(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -1064,6 +1223,39 @@ function clearPreviewCanvas(canvas: HTMLCanvasElement) {
   ctx.fillStyle = "#111";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
+}
+
+function findPendingIntentClipAtMs(project: ProjectState, playheadMs: number): IntentClip | null {
+  for (const track of project.timeline.tracks) {
+    if (!track.visible) continue;
+    for (const clip of track.clips) {
+      if (!isIntentClip(clip)) continue;
+      const start = clip.startMs;
+      const end = clip.startMs + clip.durationMs;
+      if (playheadMs < start || playheadMs >= end) continue;
+      const hasReadyVersion = clip.intentRender.versions.some((version) => version.status === "ready");
+      if (!hasReadyVersion) return clip;
+      if (!clip.intentRender.activeVersionId) return clip;
+      const activeVersion = clip.intentRender.versions.find((version) => version.id === clip.intentRender.activeVersionId);
+      if (!activeVersion || !activeVersion.outputAssetId) return clip;
+      const resolvedOutput = resolveVisualAsset(project, activeVersion.outputAssetId);
+      if (!resolvedOutput?.url) return clip;
+    }
+  }
+  return null;
+}
+
+function findAnyClipAtMs(project: ProjectState, playheadMs: number): Clip | null {
+  for (const track of project.timeline.tracks) {
+    if (!track.visible) continue;
+    for (const clip of track.clips) {
+      const start = clip.startMs;
+      const end = clip.startMs + clip.durationMs;
+      if (playheadMs < start || playheadMs >= end) continue;
+      return clip;
+    }
+  }
+  return null;
 }
 
 function drawVisualLayerOnCanvas(
@@ -1129,6 +1321,8 @@ function sanitizeClip(clip: Clip): Clip {
 
 function constrainClipToSourceDuration(project: ProjectState, trackId: string, clip: Clip): Clip {
   const normalized = sanitizeClip(clip);
+  if (normalized.type === "intent") return normalized;
+  if (!normalized.assetId) return normalized;
   const asset = project.assets.find((entry) => entry.id === normalized.assetId);
   if (!asset) return normalized;
   if (asset.kind === "image") return normalized;
@@ -1453,9 +1647,19 @@ function buildQATargets(durationUs: number, count: number, seed: number): number
 }
 
 export default function App() {
+  const intentTimelineEnabled = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const raw = window.localStorage.getItem(INTENT_TIMELINE_FLAG_KEY);
+      if (raw == null) return true;
+      return raw !== "0";
+    } catch {
+      return true;
+    }
+  }, []);
   const [project, setProject] = useState<ProjectState>(createInitialProject);
   const [playheadMs, setPlayheadMs] = useState(1200);
-  const [libraryTab, setLibraryTab] = useState<"media" | "audio" | "text" | "stickers" | "effects">("media");
+  const [libraryTab, setLibraryTab] = useState<"media" | "references" | "audio" | "text" | "stickers" | "effects">("media");
   const [rightSidebarTab, setRightSidebarTab] = useState<AIGenRightSidebarTab>(() => {
     if (typeof window === "undefined") return "ai-generation";
     try {
@@ -1465,7 +1669,6 @@ export default function App() {
       return "ai-generation";
     }
   });
-  const [aiPresets, setAiPresets] = useState<AIGenPreset[]>(() => readAIGenPresets());
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selectedClipKeys, setSelectedClipKeys] = useState<string[]>([]);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(80);
@@ -1497,6 +1700,7 @@ export default function App() {
   const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
   const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
   const [activeAssetDrag, setActiveAssetDrag] = useState<AssetDragContext | null>(null);
+  const [activeIntentDrag, setActiveIntentDrag] = useState<IntentTemplateDragContext | null>(null);
   const [videoDurationMs, setVideoDurationMs] = useState<number>(0);
   const [sourcePlayheadMs, setSourcePlayheadMs] = useState<number>(0);
   const [sourceDurationMs, setSourceDurationMs] = useState<number>(0);
@@ -1576,6 +1780,7 @@ export default function App() {
   const assetAnalysisKeyRef = useRef<Map<string, string>>(new Map());
   const exportPollTimerRef = useRef<number | null>(null);
   const aiRunTokenRef = useRef(0);
+  const renderQueueRef = useRef<IntentRenderQueue | null>(null);
 
   const decodeWorkerRef = useRef<Worker | null>(null);
   const loadedDecoderAssetIdRef = useRef<string | null>(null);
@@ -1674,10 +1879,43 @@ export default function App() {
     if (!pos) return null;
     return project.timeline.tracks[pos.trackIndex].clips[pos.clipIndex];
   }, [project, selection]);
+  const selectedIntentClip = useMemo(() => {
+    if (!project.aiGeneration.selectedClipId) return null;
+    const resolved = findIntentClipById(project, project.aiGeneration.selectedClipId);
+    return resolved?.clip ?? null;
+  }, [project]);
   const selectedTrack = useMemo(() => {
     if (!selection) return null;
     return project.timeline.tracks.find((track) => track.id === selection.trackId) ?? null;
   }, [project.timeline.tracks, selection]);
+
+  useEffect(() => {
+    if (!selectedClip || !isIntentClip(selectedClip)) {
+      if (project.aiGeneration.selectedClipId == null) return;
+      setProjectWithNormalize(
+        (prev) => ({
+          ...prev,
+          aiGeneration: {
+            ...prev.aiGeneration,
+            selectedClipId: null,
+          },
+        }),
+        { recordHistory: false },
+      );
+      return;
+    }
+    if (project.aiGeneration.selectedClipId === selectedClip.id) return;
+    setProjectWithNormalize(
+      (prev) => ({
+        ...prev,
+        aiGeneration: {
+          ...prev.aiGeneration,
+          selectedClipId: selectedClip.id,
+        },
+      }),
+      { recordHistory: false },
+    );
+  }, [project.aiGeneration.selectedClipId, selectedClip]);
 
   const programClipContext = useMemo(
     () => findProgramClipAtMs(project, playheadMs),
@@ -1736,17 +1974,6 @@ export default function App() {
         }),
       ),
     [project.timeline.tracks],
-  );
-  const mentionCandidates = useMemo(
-    () =>
-      buildMentionCandidates(
-        project.assets.map((asset) => ({
-          id: asset.id,
-          kind: asset.kind,
-          name: asset.name,
-        })),
-      ),
-    [project.assets],
   );
   const aiGenerationSourceContext = useMemo<AIGenerationSourceContext>(() => {
     const sourceAsset = activeAssetId ? project.assets.find((asset) => asset.id === activeAssetId) ?? null : null;
@@ -1829,6 +2056,236 @@ export default function App() {
         projectId: nextName,
       },
     }), { recordHistory: false });
+  };
+
+  function findIntentClipById(state: ProjectState, clipId: string): { trackId: string; clip: IntentClip } | null {
+    for (const track of state.timeline.tracks) {
+      for (const clip of track.clips) {
+        if (clip.id === clipId && isIntentClip(clip)) {
+          return { trackId: track.id, clip };
+        }
+      }
+    }
+    return null;
+  }
+
+  const selectIntentClip = (clipId: string | null) => {
+    setProjectWithNormalize(
+      (prev) => ({
+        ...prev,
+        aiGeneration: {
+          ...prev.aiGeneration,
+          selectedClipId: clipId,
+        },
+      }),
+      { recordHistory: false },
+    );
+    if (!clipId) return;
+    for (const track of project.timeline.tracks) {
+      const clip = track.clips.find((entry) => entry.id === clipId);
+      if (!clip) continue;
+      setSelection({ trackId: track.id, clipId: clip.id });
+      setSelectedClipKeys([`${track.id}:${clip.id}`]);
+      setRightSidebarTab("ai-generation");
+      return;
+    }
+  };
+
+  const updateIntentClip = (clipId: string, updater: (clip: IntentClip) => IntentClip) => {
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.map((track) => ({
+        ...track,
+        clips: track.clips.map((clip) => {
+          if (clip.id !== clipId || !isIntentClip(clip)) return clip;
+          const next = updater(clip);
+          const hasDraftChanges =
+            next.intentRender.status === "queued" || next.intentRender.status === "generating"
+              ? true
+              : next.intentRender.hasDraftChanges;
+          return {
+            ...next,
+            intentRender: {
+              ...next.intentRender,
+              hasDraftChanges,
+            },
+          };
+        }),
+      }));
+      return {
+        ...prev,
+        timeline: {
+          ...prev.timeline,
+          tracks,
+        },
+      };
+    });
+  };
+
+  const resolveIntentDurationMs = (kind: IntentBlockKind, durationHintMs?: number) => {
+    if (typeof durationHintMs === "number" && Number.isFinite(durationHintMs) && durationHintMs > 0) {
+      return Math.max(MIN_CLIP_DURATION_MS, Math.round(durationHintMs));
+    }
+    const contract = createDefaultIntentContract(kind);
+    return Math.max(MIN_CLIP_DURATION_MS, Math.round(contract.output.durationSec * 1000));
+  };
+
+  const addIntentToTimeline = (
+    kind: IntentBlockKind,
+    targetTrackId?: string,
+    startAtMs?: number,
+    durationHintMs?: number,
+  ) => {
+    if (!intentTimelineEnabled) {
+      setLog("intentTimelineV1 disabled (set localStorage.mav.intentTimelineV1=1).");
+      return;
+    }
+    const contract = createDefaultIntentContract(kind);
+    const isAudioIntent = kind === "vo" || kind === "music" || kind === "sfx";
+    const requiredTrackKind: TrackKind = isAudioIntent ? "audio" : "video";
+    const startMs = Math.max(0, Math.round(startAtMs ?? playheadMs));
+    const durationMs = resolveIntentDurationMs(kind, durationHintMs);
+    const explicitTrack =
+      targetTrackId == null
+        ? null
+        : project.timeline.tracks.find(
+            (track) => track.id === targetTrackId && !track.locked && track.kind === requiredTrackKind,
+          ) ?? null;
+    const fallbackTrack = project.timeline.tracks.find((track) => track.kind === requiredTrackKind && !track.locked) ?? null;
+    const targetTrack = explicitTrack ?? fallbackTrack;
+    if (!targetTrack) {
+      setLog(`No unlocked ${requiredTrackKind} track available for ${contract.title}.`);
+      return;
+    }
+    const clipId = `intent-${crypto.randomUUID().slice(0, 8)}`;
+    const nextClip: IntentClip = {
+      id: clipId,
+      type: "intent",
+      label: contract.title,
+      assetId: null,
+      startMs,
+      durationMs,
+      inMs: 0,
+      outMs: durationMs,
+      mediaRole: toMediaRole(targetTrack.kind),
+      intent: contract,
+      intentRender: createDefaultIntentRenderState(),
+    };
+
+    setProjectWithNormalize((prev) => {
+      const nextTracks = prev.timeline.tracks.map((track) =>
+        track.id === targetTrack.id
+          ? {
+              ...track,
+              clips: sortClips([...track.clips, nextClip]),
+            }
+          : track,
+      );
+      return {
+        ...prev,
+        timeline: {
+          durationMs: Math.max(prev.timeline.durationMs, startMs + durationMs + 1000),
+          tracks: nextTracks,
+        },
+        aiGeneration: {
+          ...prev.aiGeneration,
+          selectedClipId: clipId,
+        },
+      };
+    });
+
+    setSelection({ trackId: targetTrack.id, clipId });
+    setSelectedClipKeys([`${targetTrack.id}:${clipId}`]);
+    setPlayheadMs(startMs);
+    setLog(`Intent block created: ${contract.title}`);
+  };
+
+  const addIntentToNewTrack = (
+    kind: IntentBlockKind,
+    trackKind: "video" | "audio",
+    startAtMs: number,
+    durationHintMs?: number,
+  ) => {
+    if (!intentTimelineEnabled) {
+      setLog("intentTimelineV1 disabled (set localStorage.mav.intentTimelineV1=1).");
+      return;
+    }
+    const requiresAudio = kind === "vo" || kind === "music" || kind === "sfx";
+    const requiredTrackKind: "video" | "audio" = requiresAudio ? "audio" : "video";
+    if (trackKind !== requiredTrackKind) {
+      setLog(requiredTrackKind === "audio" ? "Intent audio only on audio tracks." : "Intent video only on video tracks.");
+      return;
+    }
+
+    const contract = createDefaultIntentContract(kind);
+    const startMs = Math.max(0, Math.round(startAtMs));
+    const durationMs = resolveIntentDurationMs(kind, durationHintMs);
+    const createdTrackId = nextTrackId(project.timeline.tracks, trackKind);
+    const clipId = `intent-${crypto.randomUUID().slice(0, 8)}`;
+    const nextClip: IntentClip = {
+      id: clipId,
+      type: "intent",
+      label: contract.title,
+      assetId: null,
+      startMs,
+      durationMs,
+      inMs: 0,
+      outMs: durationMs,
+      mediaRole: toMediaRole(trackKind),
+      intent: contract,
+      intentRender: createDefaultIntentRenderState(),
+    };
+
+    setProjectWithNormalize((prev) => {
+      let tracks = [...prev.timeline.tracks];
+      const nextTrack: Track = {
+        id: createdTrackId,
+        kind: trackKind,
+        muted: false,
+        locked: false,
+        visible: true,
+        clips: [],
+      };
+      if (trackKind === "audio") {
+        tracks.push(nextTrack);
+      } else {
+        const firstVideoIndex = tracks.findIndex((track) => track.kind === "video");
+        const insertIndex =
+          firstVideoIndex >= 0
+            ? firstVideoIndex
+            : (() => {
+                const firstAudioIndex = tracks.findIndex((track) => track.kind === "audio");
+                return firstAudioIndex >= 0 ? firstAudioIndex : tracks.length;
+              })();
+        tracks.splice(insertIndex, 0, nextTrack);
+      }
+      const trackIndex = tracks.findIndex((track) => track.id === createdTrackId);
+      if (trackIndex < 0) return prev;
+
+      tracks[trackIndex] = {
+        ...tracks[trackIndex],
+        clips: sortClips([...tracks[trackIndex].clips, nextClip]),
+      };
+      return {
+        ...prev,
+        timeline: {
+          durationMs: Math.max(prev.timeline.durationMs, startMs + durationMs + 1000),
+          tracks,
+        },
+        aiGeneration: {
+          ...prev.aiGeneration,
+          selectedClipId: clipId,
+        },
+      };
+    });
+
+    setSelection({ trackId: createdTrackId, clipId });
+    setSelectedClipKeys([`${createdTrackId}:${clipId}`]);
+    setPlayheadMs(startMs);
+    setLog(`Created ${trackKind} track and added intent ${contract.title}.`);
+  };
+
+  const createIntentBlock = (kind: IntentBlockKind) => {
+    addIntentToTimeline(kind, undefined, playheadMs);
   };
 
   const persistAnalysisCache = () => {
@@ -2312,6 +2769,10 @@ export default function App() {
         } else {
           setLog(`Committed ${drag.mode} for ${scopeLabel} (${collisionMode}).`);
         }
+
+        // Keep preview focused on the edited clip position after drag commit.
+        setPlayheadMs(Math.max(0, Math.round(preview.startMs)));
+        setPreviewMonitorMode("program");
       }
     }
 
@@ -2365,6 +2826,10 @@ export default function App() {
       });
       return;
     }
+
+    // Keep Program preview aligned to the interacted clip.
+    setPlayheadMs(Math.round(clip.startMs));
+    setPreviewMonitorMode("program");
 
     const rect = event.currentTarget.getBoundingClientRect();
     const localX = event.clientX - rect.left;
@@ -2438,6 +2903,73 @@ export default function App() {
     return () => {
       window.removeEventListener("dragend", clearAssetDrag);
       window.removeEventListener("drop", clearAssetDrag);
+    };
+  }, []);
+
+  useEffect(() => {
+    const queue = new IntentRenderQueue((update) => {
+      setProject((prev) => {
+        const nextAssets = [...prev.assets];
+        if (update.status === "ready" && update.outputAssetId && update.thumbnailUrl) {
+          if (!nextAssets.some((asset) => asset.id === update.outputAssetId)) {
+            nextAssets.push({
+              id: update.outputAssetId,
+              kind: "image",
+              url: update.thumbnailUrl,
+              name: `Intent ${update.versionId}`,
+              durationMs: 3000,
+              heroThumbnail: update.thumbnailUrl,
+              thumbnails: [update.thumbnailUrl],
+            });
+          }
+        }
+        const tracks = prev.timeline.tracks.map((track) => ({
+          ...track,
+          clips: track.clips.map((clip) => {
+            if (clip.id !== update.clipId || !isIntentClip(clip)) return clip;
+            const nextVersions = clip.intentRender.versions.map((version) => {
+              if (version.id !== update.versionId) return version;
+              return {
+                ...version,
+                status: update.status,
+                thumbnailUrl: update.thumbnailUrl ?? version.thumbnailUrl,
+                outputAssetId: update.outputAssetId ?? version.outputAssetId,
+                error: update.error ?? null,
+              };
+            });
+            return {
+              ...clip,
+              intentRender: {
+                ...clip.intentRender,
+                status: update.status,
+                progressPct: update.progressPct,
+                error: update.error ?? null,
+                activeVersionId: update.versionId,
+                versions: nextVersions,
+                hasDraftChanges: false,
+              },
+            };
+          }),
+        }));
+        return normalizeProject({
+          ...prev,
+          assets: nextAssets,
+          timeline: {
+            ...prev.timeline,
+            tracks,
+          },
+        });
+      });
+      if (update.status === "ready") {
+        setLog(`Intent render ready: ${update.clipId}/${update.versionId}`);
+      } else if (update.status === "failed") {
+        setLog(`Intent render failed: ${update.clipId}/${update.versionId}`);
+      }
+    });
+    renderQueueRef.current = queue;
+    return () => {
+      queue.clear();
+      renderQueueRef.current = null;
     };
   }, []);
 
@@ -3132,15 +3664,17 @@ export default function App() {
         id: track.id,
         kind: track.kind,
         locked: track.locked,
-        clips: track.clips.map((clip) => ({
-          id: clip.id,
-          label: clip.label,
-          assetId: clip.assetId,
-          startMs: clip.startMs,
-          durationMs: clip.durationMs,
-          inMs: clip.inMs,
-          outMs: clip.outMs,
-        })),
+        clips: track.clips
+          .filter((clip): clip is Clip & { assetId: string } => typeof clip.assetId === "string" && clip.assetId.length > 0)
+          .map((clip) => ({
+            id: clip.id,
+            label: clip.label,
+            assetId: clip.assetId,
+            startMs: clip.startMs,
+            durationMs: clip.durationMs,
+            inMs: clip.inMs,
+            outMs: clip.outMs,
+          })),
       })),
       assets: normalized.assets.map((asset) => ({
         id: asset.id,
@@ -3230,93 +3764,230 @@ export default function App() {
     setLog(`Applied AI result: silence-cut-v1 (${appliedCount} clip(s)).`);
   };
 
-  const setAIGenerationConfig = (nextConfig: AIGenConfig) => {
-    const normalized = normalizeAIGenConfig(nextConfig);
-    setProjectWithNormalize(
-      (prev) => ({
-        ...prev,
-        aiGeneration: {
-          ...prev.aiGeneration,
-          current: normalized,
-        },
-      }),
-      { recordHistory: false },
-    );
+  const setIntentContract = (nextContract: IntentContract) => {
+    if (!project.aiGeneration.selectedClipId) return;
+    updateIntentClip(project.aiGeneration.selectedClipId, (clip) => ({
+      ...clip,
+      label: nextContract.title,
+      durationMs: Math.max(1000, Math.round(nextContract.output.durationSec * 1000)),
+      outMs: clip.inMs + Math.max(1000, Math.round(nextContract.output.durationSec * 1000)),
+      intent: nextContract,
+      intentRender: {
+        ...clip.intentRender,
+        hasDraftChanges: clip.intentRender.status === "ready" || clip.intentRender.status === "failed" ? true : clip.intentRender.hasDraftChanges,
+      },
+    }));
   };
 
-  const queueAIGenerationRequest = () => {
-    const configSnapshot = normalizeAIGenConfig(project.aiGeneration.current);
-    if (configSnapshot.prompt.text.trim().length === 0) {
-      setLog("AI generation blocked: add a scene prompt.");
+  const queueIntentGeneration = () => {
+    const selected = project.aiGeneration.selectedClipId
+      ? findIntentClipById(project, project.aiGeneration.selectedClipId)
+      : null;
+    if (!selected) {
+      setLog("Select an intent block before generating.");
       return;
     }
 
-    const { effectiveConfig, gatedOffFields } = buildEffectiveConfig(configSnapshot);
-    const requestId = `aigen-${crypto.randomUUID().slice(0, 8)}`;
+    const versionId = `v-${crypto.randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
-
-    const requestRecord = {
-      id: requestId,
+    const snapshot = selected.clip.intent;
+    const newVersion: IntentRenderVersion = {
+      id: versionId,
       createdAt: now,
-      status: "queued" as const,
-      configSnapshot,
-      effectiveConfig,
-      gatedOffFields,
-      engineId: effectiveConfig.engine.engineId,
-      modelId: effectiveConfig.engine.modelId,
-      mode: effectiveConfig.engine.mode,
-      batchCount: effectiveConfig.output.batchCount,
+      status: "queued",
+      contractSnapshot: snapshot,
+      outputAssetId: null,
+      thumbnailUrl: null,
+      error: null,
     };
 
-    const promptVersion = {
-      id: `prompt-${crypto.randomUUID().slice(0, 8)}`,
-      createdAt: now,
-      prompt: configSnapshot.prompt.text,
-      negativePrompt: configSnapshot.prompt.negativeText,
-      engineId: configSnapshot.engine.engineId,
-      modelId: configSnapshot.engine.modelId,
-      seedMode: configSnapshot.prompt.seedMode,
-      seed: configSnapshot.prompt.seed,
-    };
+    updateIntentClip(selected.clip.id, (clip) => ({
+      ...clip,
+      intentRender: {
+        ...clip.intentRender,
+        status: "queued",
+        progressPct: 0,
+        queuedAt: now,
+        activeVersionId: versionId,
+        versions: [...clip.intentRender.versions, newVersion].slice(-24),
+        error: null,
+        hasDraftChanges: false,
+      },
+    }));
 
+    renderQueueRef.current?.enqueue({
+      clipId: selected.clip.id,
+      versionId,
+      contractSnapshot: snapshot,
+    });
+    setLog(`Intent generation queued: ${selected.clip.label} (${versionId})`);
+  };
+
+  const retryIntentVersion = (clipId: string, versionId: string) => {
+    const selected = findIntentClipById(project, clipId);
+    if (!selected) return;
+    const version = selected.clip.intentRender.versions.find((entry) => entry.id === versionId);
+    if (!version) return;
+
+    updateIntentClip(clipId, (clip) => ({
+      ...clip,
+      intentRender: {
+        ...clip.intentRender,
+        status: "queued",
+        progressPct: 0,
+        queuedAt: new Date().toISOString(),
+        activeVersionId: versionId,
+        error: null,
+      },
+    }));
+
+    renderQueueRef.current?.retry({
+      clipId,
+      versionId,
+      contractSnapshot: version.contractSnapshot,
+    });
+  };
+
+  const createFrameFromSourceContext = (source: "source-monitor" | "timeline-program"): IntentFrameRef | null => {
+    if (source === "source-monitor") {
+      if (!aiGenerationSourceContext.sourceAssetId) return null;
+      return {
+        assetId: aiGenerationSourceContext.sourceAssetId,
+        assetLabel: aiGenerationSourceContext.sourceAssetLabel,
+        timeMs: Math.max(0, Math.round(aiGenerationSourceContext.sourcePlayheadMs)),
+        thumbnailUrl: aiGenerationSourceContext.sourceThumbnailUrl,
+        source,
+      };
+    }
+    if (!aiGenerationSourceContext.timelineAssetId) return null;
+    return {
+      assetId: aiGenerationSourceContext.timelineAssetId,
+      assetLabel: aiGenerationSourceContext.timelineAssetLabel,
+      timeMs: Math.max(0, Math.round(aiGenerationSourceContext.timelinePlayheadMs)),
+      thumbnailUrl: aiGenerationSourceContext.timelineThumbnailUrl,
+      source,
+    };
+  };
+
+  const setIntentFrame = (target: "first" | "end", source: "source-monitor" | "timeline-program") => {
+    const selectedId = project.aiGeneration.selectedClipId;
+    if (!selectedId) return;
+    const frame = createFrameFromSourceContext(source);
+    if (!frame) return;
+    updateIntentClip(selectedId, (clip) => ({
+      ...clip,
+      intent: {
+        ...clip.intent,
+        firstFrame: target === "first" ? frame : clip.intent.firstFrame,
+        endFrame: target === "end" ? frame : clip.intent.endFrame,
+      },
+      intentRender: {
+        ...clip.intentRender,
+        hasDraftChanges: clip.intentRender.status === "ready" ? true : clip.intentRender.hasDraftChanges,
+      },
+    }));
+  };
+
+  const continueFromPrevious = () => {
+    const selectedId = project.aiGeneration.selectedClipId;
+    if (!selectedId) return;
+    const resolved = findIntentClipById(project, selectedId);
+    if (!resolved) return;
+    const track = project.timeline.tracks.find((entry) => entry.id === resolved.trackId);
+    if (!track) return;
+    const sorted = sortClips(track.clips);
+    const index = sorted.findIndex((entry) => entry.id === selectedId);
+    const previous = index > 0 ? sorted[index - 1] : null;
+    let candidate: IntentFrameRef | null = null;
+    if (previous && isIntentClip(previous)) {
+      candidate = previous.intent.endFrame ?? previous.intent.firstFrame ?? null;
+    }
+    if (!candidate) {
+      candidate = createFrameFromSourceContext("timeline-program");
+    }
+    if (!candidate) return;
+    updateIntentClip(selectedId, (clip) => ({
+      ...clip,
+      intent: {
+        ...clip.intent,
+        firstFrame: candidate,
+      },
+      intentRender: {
+        ...clip.intentRender,
+        hasDraftChanges: clip.intentRender.status === "ready" ? true : clip.intentRender.hasDraftChanges,
+      },
+    }));
+    setLog("First frame updated from previous continuity.");
+  };
+
+  const addReferenceToBank = (target: "characters" | "objects", source: "source-monitor" | "timeline-program") => {
+    const frame = createFrameFromSourceContext(source);
+    if (!frame) return;
+    const entry: IntentBankRef = {
+      id: `${target.slice(0, 3)}-${crypto.randomUUID().slice(0, 8)}`,
+      label: `${frame.assetLabel} @ ${Math.round(frame.timeMs / 1000)}s`,
+      thumbnailUrl: frame.thumbnailUrl,
+      source: frame.source,
+      assetId: frame.assetId,
+      timeMs: frame.timeMs,
+      createdAt: new Date().toISOString(),
+    };
     setProjectWithNormalize(
       (prev) => ({
         ...prev,
         aiGeneration: {
           ...prev.aiGeneration,
-          current: configSnapshot,
-          history: [...prev.aiGeneration.history, requestRecord].slice(-AI_GENERATION_HISTORY_LIMIT),
-          promptVersions: [...prev.aiGeneration.promptVersions, promptVersion].slice(-AI_PROMPT_HISTORY_LIMIT),
+          referenceBank: {
+            ...prev.aiGeneration.referenceBank,
+            [target]: [entry, ...prev.aiGeneration.referenceBank[target]].slice(0, 80),
+          },
         },
       }),
       { recordHistory: false },
     );
-
-    const gatedSuffix =
-      gatedOffFields.length > 0 ? ` (${gatedOffFields.length} field(s) gated: ${gatedOffFields.join(", ")})` : "";
-    setLog(`AI generation queued: ${requestId}${gatedSuffix}`);
+    setLog(`Reference added to ${target}.`);
   };
 
-  const applyAIGenPresetById = (presetId: string) => {
-    const preset = aiPresets.find((item) => item.id === presetId);
-    if (!preset) {
-      setLog("Preset not found.");
-      return;
-    }
-    setAIGenerationConfig(preset.config);
-    setLog(`AI preset applied: ${preset.name}`);
+  const removeReferenceFromBank = (target: "characters" | "objects", bankRefId: string) => {
+    setProjectWithNormalize(
+      (prev) => ({
+        ...prev,
+        aiGeneration: {
+          ...prev.aiGeneration,
+          referenceBank: {
+            ...prev.aiGeneration.referenceBank,
+            [target]: prev.aiGeneration.referenceBank[target].filter((entry) => entry.id !== bankRefId),
+          },
+        },
+      }),
+      { recordHistory: false },
+    );
   };
 
-  const saveAIGenPresetByName = (name: string) => {
-    setAiPresets((prev) => saveAIGenPreset(prev, name, project.aiGeneration.current));
-    setLog(`AI preset saved: ${name.trim() || "Untitled preset"}`);
-  };
-
-  const deleteAIGenPresetById = (presetId: string) => {
-    const preset = aiPresets.find((item) => item.id === presetId);
-    if (!preset) return;
-    setAiPresets((prev) => removeAIGenPreset(prev, presetId));
-    setLog(`AI preset deleted: ${preset.name}`);
+  const setClipReferenceStrength = (
+    target: "characterRefs" | "objectRefs",
+    bankRefId: string,
+    enabled: boolean,
+    strength: IntentRefStrength,
+  ) => {
+    const selectedId = project.aiGeneration.selectedClipId;
+    if (!selectedId) return;
+    updateIntentClip(selectedId, (clip) => {
+      const current = clip.intent[target];
+      const exists = current.some((entry) => entry.bankRefId === bankRefId);
+      const next = enabled
+        ? exists
+          ? current.map((entry) => (entry.bankRefId === bankRefId ? { ...entry, strength } : entry))
+          : [...current, { bankRefId, strength, locked: false }]
+        : current.filter((entry) => entry.bankRefId !== bankRefId);
+      return {
+        ...clip,
+        intent: {
+          ...clip.intent,
+          [target]: next,
+        },
+      };
+    });
   };
 
   const updateSelectedTiming = (patch: Partial<Pick<Clip, "startMs" | "durationMs" | "inMs" | "outMs">>) => {
@@ -3432,7 +4103,8 @@ export default function App() {
       if (
         parsed.schemaVersion !== "mav.project.v0" &&
         parsed.schemaVersion !== "mav.project.v1" &&
-        parsed.schemaVersion !== "mav.project.v2"
+        parsed.schemaVersion !== "mav.project.v2" &&
+        parsed.schemaVersion !== "mav.project.v3"
       ) {
         setLog("Saved project schema is not supported.");
         return;
@@ -3457,7 +4129,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "mav-project-v1.json";
+    a.download = "mav-project-v3.json";
     a.click();
     URL.revokeObjectURL(url);
     setLog("Project JSON exported.");
@@ -4222,12 +4894,63 @@ export default function App() {
     if (!canvas) return;
 
     clearPreviewCanvas(canvas);
-    const stack = findProgramStackAtMs(projectRef.current, atMs);
-    if (stack.length === 0) return;
+    const currentProject = projectRef.current;
+    const stack = findProgramStackAtMs(currentProject, atMs);
+    if (stack.length === 0) {
+      const pendingIntent = findPendingIntentClipAtMs(currentProject, atMs);
+      if (pendingIntent) {
+        const firstThumb = pendingIntent.intent.firstFrame?.thumbnailUrl ?? null;
+        if (firstThumb) {
+          const cached = imageCacheRef.current.get(firstThumb);
+          if (cached && cached.complete && cached.naturalWidth > 0) {
+            drawImageSourceOnCanvas(canvas, cached);
+            return;
+          }
+          if (!imageLoadingRef.current.has(firstThumb)) {
+            imageLoadingRef.current.add(firstThumb);
+            const img = new Image();
+            img.onload = () => {
+              imageLoadingRef.current.delete(firstThumb);
+              imageCacheRef.current.set(firstThumb, img);
+              drawProgramComposite(null, null, playheadMsRef.current);
+            };
+            img.onerror = () => {
+              imageLoadingRef.current.delete(firstThumb);
+            };
+            img.src = firstThumb;
+          }
+        }
+        drawIntentPlaceholderOnCanvas(canvas, {
+          title: pendingIntent.intent.title || pendingIntent.label,
+          status: pendingIntent.intentRender.status,
+          progressPct: pendingIntent.intentRender.progressPct,
+        });
+        return;
+      }
+      const anyClip = findAnyClipAtMs(currentProject, atMs);
+      if (anyClip) {
+        drawIntentPlaceholderOnCanvas(canvas, {
+          title: anyClip.label || "Clip",
+          status: "unresolved",
+          progressPct: 0,
+        });
+      }
+      return;
+    }
     const hasVideoLayer = stack.some((layer) => layer.role === "video");
-    if (!hasVideoLayer) return;
-    const projectWidth = Math.max(1, projectRef.current.meta.width);
-    const projectHeight = Math.max(1, projectRef.current.meta.height);
+    if (!hasVideoLayer) {
+      const pendingIntent = findPendingIntentClipAtMs(currentProject, atMs);
+      if (pendingIntent) {
+        drawIntentPlaceholderOnCanvas(canvas, {
+          title: pendingIntent.intent.title || pendingIntent.label,
+          status: pendingIntent.intentRender.status,
+          progressPct: pendingIntent.intentRender.progressPct,
+        });
+      }
+      return;
+    }
+    const projectWidth = Math.max(1, currentProject.meta.width);
+    const projectHeight = Math.max(1, currentProject.meta.height);
 
     const drawImageContext = (context: ProgramClipContext) => {
       const cached = imageCacheRef.current.get(context.assetUrl);
@@ -5010,17 +5733,34 @@ export default function App() {
   useEffect(() => {
     if (isPlaying) return;
     if (hasProgramVideoAtPlayhead) return;
+    drawProgramComposite(null, null, playheadMs);
+  }, [hasProgramVideoAtPlayhead, isPlaying, playheadMs]);
+
+  useEffect(() => {
+    if (isPlaying) return;
+    if (previewMonitorMode !== "program") return;
+    if (!selectedClip || !isIntentClip(selectedClip)) return;
+    const activeVersion = selectedClip.intentRender.activeVersionId
+      ? selectedClip.intentRender.versions.find((entry) => entry.id === selectedClip.intentRender.activeVersionId) ?? null
+      : null;
+    if (activeVersion?.outputAssetId) {
+      const resolved = resolveVisualAsset(project, activeVersion.outputAssetId);
+      if (resolved?.url) return;
+    }
     const canvas = programCanvasRef.current;
     if (!canvas) return;
-    clearPreviewCanvas(canvas);
-  }, [hasProgramVideoAtPlayhead, isPlaying, playheadMs]);
+    drawIntentPlaceholderOnCanvas(canvas, {
+      title: selectedClip.intent.title || selectedClip.label || "Intent block",
+      status: selectedClip.intentRender.status,
+      progressPct: selectedClip.intentRender.progressPct,
+    });
+  }, [isPlaying, previewMonitorMode, project, selectedClip]);
 
   useEffect(() => {
     const useFallbackPreview = decoderMode !== "webcodecs";
     if (!useFallbackPreview || isPlaying) return;
     if (!programClipContext) {
-      const canvas = programCanvasRef.current;
-      if (canvas) clearPreviewCanvas(canvas);
+      drawProgramComposite(null, null, playheadMs);
       return;
     }
     if (programClipContext.assetKind === "image") {
@@ -5761,8 +6501,47 @@ export default function App() {
   const timelineStatus = `Ready | Selected: ${selectedClipCount} | Ripple: ${rippleMode}`;
   const diagnosticsEnabled = devMode && diagnosticsVisible;
   const exportCanStart = canStartExport();
-  const aiSuggestionCount = aiLastOutput?.suggestions.length ?? 0;
-  const canApplyAiResult = aiJobStatus === "completed" && (aiLastOutput?.clipPatches.length ?? 0) > 0;
+  const selectedIntentPanelState = selectedIntentClip
+    ? {
+        id: selectedIntentClip.id,
+        title: selectedIntentClip.label,
+        intent: selectedIntentClip.intent,
+        intentRender: selectedIntentClip.intentRender,
+      }
+    : null;
+  const intentOverlay = useMemo(() => {
+    if (!selectedIntentClip) return null;
+    const activeVersion = selectedIntentClip.intentRender.activeVersionId
+      ? selectedIntentClip.intentRender.versions.find((entry) => entry.id === selectedIntentClip.intentRender.activeVersionId) ?? null
+      : null;
+    if (activeVersion?.outputAssetId) return null;
+    return {
+      title: selectedIntentClip.intent.title || selectedIntentClip.label,
+      status: selectedIntentClip.intentRender.status,
+      progressPct: selectedIntentClip.intentRender.progressPct,
+    };
+  }, [selectedIntentClip]);
+  const mediaIntentTemplates = useMemo(
+    () =>
+      INTENT_CREATE_TEMPLATES.map((template) => ({
+        kind: template.kind,
+        label: template.label,
+        durationMs: Math.max(1000, Math.round(createDefaultIntentContract(template.kind).output.durationSec * 1000)),
+      })),
+    [],
+  );
+  const previewDebugLines = useMemo(() => {
+    if (!devMode) return [];
+    const stack = findProgramStackAtMs(project, playheadMs);
+    const pendingIntent = findPendingIntentClipAtMs(project, playheadMs);
+    return [
+      `monitor=${previewMonitorMode}`,
+      `playhead=${Math.round(playheadMs)}ms`,
+      `stack=${stack.length} primary=${programClipContext?.clipId ?? "none"}`,
+      `pending=${pendingIntent ? `${pendingIntent.id}:${pendingIntent.intentRender.status}` : "none"}`,
+      `selected=${selection ? `${selection.trackId}/${selection.clipId}` : "none"}`,
+    ];
+  }, [devMode, playheadMs, previewMonitorMode, programClipContext, project, selection]);
   const timelineAssetMap = useMemo(() => new Map(project.assets.map((asset) => [asset.id, asset])), [project.assets]);
   const projectSettingsValue = useMemo(
     () => ({
@@ -5875,6 +6654,7 @@ export default function App() {
               <MediaBinPanel
                 assets={project.assets}
                 activeAssetId={activeAssetId}
+                intentTemplates={mediaIntentTemplates}
                 onUpload={(file) => {
                   void onPickVideo(file);
                 }}
@@ -5890,15 +6670,72 @@ export default function App() {
                   })();
                 }}
                 onAddToTimeline={(assetId) => addAssetToTimeline(assetId)}
+                onAddIntentToTimeline={(kind) => createIntentBlock(kind)}
                 onAssetDragStart={(payload) => {
                   setActiveAssetDrag(payload);
+                  setActiveIntentDrag(null);
                   const asset = project.assets.find((item) => item.id === payload.assetId);
                   setLog(`Drag asset to timeline: ${asset?.name ?? payload.assetId}`);
                 }}
                 onAssetDragEnd={() => {
                   setActiveAssetDrag(null);
                 }}
+                onIntentDragStart={(payload) => {
+                  setActiveIntentDrag(payload);
+                  setActiveAssetDrag(null);
+                  setLog(`Drag intent block to timeline: ${payload.label}`);
+                }}
+                onIntentDragEnd={() => {
+                  setActiveIntentDrag(null);
+                }}
               />
+            )}
+            referencesContent={(
+              <section className="referenceBankPanel">
+                <header className="panelHeader">
+                  <h2>Reference Bank</h2>
+                </header>
+                <div className="buttons">
+                  <button type="button" className="iconBtn" onClick={() => addReferenceToBank("characters", "timeline-program")}>
+                    Use timeline frame as Character
+                  </button>
+                  <button type="button" className="iconBtn" onClick={() => addReferenceToBank("objects", "timeline-program")}>
+                    Use timeline frame as Objet
+                  </button>
+                </div>
+                <div className="referenceBankColumns">
+                  <section>
+                    <h3>Characters ({project.aiGeneration.referenceBank.characters.length})</h3>
+                    <div className="referenceBankList">
+                      {project.aiGeneration.referenceBank.characters.map((entry) => (
+                        <article key={entry.id} className="referenceBankItem">
+                          <strong>{entry.label}</strong>
+                          <small>{Math.round(entry.timeMs / 1000)}s · {entry.source}</small>
+                          <button type="button" className="iconBtn tiny dangerBtn" onClick={() => removeReferenceFromBank("characters", entry.id)}>
+                            ✕
+                          </button>
+                        </article>
+                      ))}
+                      {project.aiGeneration.referenceBank.characters.length === 0 ? <p className="hint">No character refs.</p> : null}
+                    </div>
+                  </section>
+                  <section>
+                    <h3>Objets ({project.aiGeneration.referenceBank.objects.length})</h3>
+                    <div className="referenceBankList">
+                      {project.aiGeneration.referenceBank.objects.map((entry) => (
+                        <article key={entry.id} className="referenceBankItem">
+                          <strong>{entry.label}</strong>
+                          <small>{Math.round(entry.timeMs / 1000)}s · {entry.source}</small>
+                          <button type="button" className="iconBtn tiny dangerBtn" onClick={() => removeReferenceFromBank("objects", entry.id)}>
+                            ✕
+                          </button>
+                        </article>
+                      ))}
+                      {project.aiGeneration.referenceBank.objects.length === 0 ? <p className="hint">No object refs.</p> : null}
+                    </div>
+                  </section>
+                </div>
+              </section>
             )}
           />
         )}
@@ -5945,6 +6782,8 @@ export default function App() {
               setSourcePlayheadMs(clamp(Math.round(value), 0, sourceMonitorDurationMs));
             }}
             onSourceStepFrame={stepSourceFrame}
+            intentOverlay={intentOverlay}
+            debugLines={previewDebugLines}
           />
         )}
         inspector={(
@@ -5953,27 +6792,20 @@ export default function App() {
             onTabChange={setRightSidebarTab}
             aiGeneration={(
               <AIGenerationPanel
-                config={project.aiGeneration.current}
-                history={project.aiGeneration.history}
-                promptVersions={project.aiGeneration.promptVersions}
-                presets={aiPresets}
-                mentionCandidates={mentionCandidates}
+                selectedClip={selectedIntentPanelState}
+                referenceBank={project.aiGeneration.referenceBank}
                 sourceContext={aiGenerationSourceContext}
-                legacySilenceCut={{
-                  status: aiJobStatus,
-                  summary: aiSummary,
-                  suggestionCount: aiSuggestionCount,
-                  canApply: canApplyAiResult,
+                onContractChange={setIntentContract}
+                onGenerate={queueIntentGeneration}
+                onRetryVersion={(versionId) => {
+                  if (!project.aiGeneration.selectedClipId) return;
+                  retryIntentVersion(project.aiGeneration.selectedClipId, versionId);
                 }}
-                onConfigChange={setAIGenerationConfig}
-                onGenerate={queueAIGenerationRequest}
-                onApplyPreset={applyAIGenPresetById}
-                onSavePreset={saveAIGenPresetByName}
-                onDeletePreset={deleteAIGenPresetById}
-                onRunLegacySilenceCut={() => {
-                  void runSilenceCutAiPlugin();
-                }}
-                onApplyLegacySilenceCut={applySilenceCutResult}
+                onSetFrame={setIntentFrame}
+                onContinueFromPrevious={continueFromPrevious}
+                onAttachRef={setClipReferenceStrength}
+                onAddBankRef={addReferenceToBank}
+                onRemoveBankRef={removeReferenceFromBank}
               />
             )}
             inspector={(
@@ -6037,6 +6869,9 @@ export default function App() {
             onAssetDrop={(assetId, trackId, startMs, durationHintMs) => {
               addAssetToTimeline(assetId, trackId, startMs, durationHintMs);
             }}
+            onIntentDrop={(kind, trackId, startMs, durationHintMs) => {
+              addIntentToTimeline(kind, trackId, startMs, durationHintMs);
+            }}
             onSourceRangeDrop={(payload, trackId, startMs) => {
               insertSourceRangeToTimeline({
                 assetId: payload.assetId,
@@ -6050,6 +6885,9 @@ export default function App() {
             onAssetDropToNewTrack={(assetId, trackKind, startMs, durationHintMs) => {
               addAssetToNewTrack(assetId, trackKind, startMs, durationHintMs);
             }}
+            onIntentDropToNewTrack={(kind, trackKind, startMs, durationHintMs) => {
+              addIntentToNewTrack(kind, trackKind, startMs, durationHintMs);
+            }}
             onSelectClipKeys={setSelectionFromKeys}
             onClearSelection={() => setSelectionFromKeys([])}
             onSplitClip={(trackId, clipId) => splitClipAt(trackId, clipId, playheadMs)}
@@ -6057,12 +6895,28 @@ export default function App() {
             onDuplicateClip={duplicateClip}
             onDetachAudio={detachLinkedGroup}
             onRelinkClip={relinkSelectedVideoAudio}
+            onOpenIntentComposer={(_, clipId) => {
+              selectIntentClip(clipId);
+              setPreviewMonitorMode("program");
+            }}
+            onRetryIntentRender={(trackId, clipId) => {
+              void trackId;
+              const resolved = findIntentClipById(project, clipId);
+              if (!resolved) return;
+              const activeId =
+                resolved.clip.intentRender.activeVersionId ??
+                resolved.clip.intentRender.versions[resolved.clip.intentRender.versions.length - 1]?.id ??
+                null;
+              if (!activeId) return;
+              retryIntentVersion(clipId, activeId);
+            }}
             onAddTrack={addTrack}
             onRemoveTrack={removeTrack}
             onToggleTrackFlag={toggleTrackFlag}
             onDropRejected={setLog}
             assetMap={timelineAssetMap}
             activeAssetDrag={activeAssetDrag}
+            activeIntentDrag={activeIntentDrag}
           />
         )}
         diagnostics={

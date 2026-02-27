@@ -33,7 +33,7 @@ export function writeAIGenPresets(presets: AIGenPreset[]): void {
   try {
     window.localStorage.setItem(AI_PRESETS_STORAGE_KEY, JSON.stringify(trimPresetList(presets)));
   } catch {
-    // Ignore local storage failures; panel remains usable in memory.
+    // Ignore local storage failures.
   }
 }
 

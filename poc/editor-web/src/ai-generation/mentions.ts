@@ -1,19 +1,16 @@
-import type { MentionAssetSource, MentionCandidate } from "./types";
+import type { MentionCandidate } from "./types";
 
-const SEEDED_MENTIONS: MentionCandidate[] = [
-  { id: "char-ava", label: "Ava", token: "ava", kind: "character", tags: ["hero", "female"] },
-  { id: "char-noah", label: "Noah", token: "noah", kind: "character", tags: ["hero", "male"] },
-  { id: "char-sage", label: "Sage", token: "sage", kind: "character", tags: ["mentor"] },
-  { id: "prop-drone", label: "Drone", token: "drone", kind: "prop", tags: ["tech", "flying"] },
-  { id: "prop-vintage-car", label: "Vintage Car", token: "vintage-car", kind: "prop", tags: ["car", "retro"] },
-  { id: "env-neon-city", label: "Neon City", token: "neon-city", kind: "environment", tags: ["night", "urban"] },
-  { id: "env-desert", label: "Desert Canyon", token: "desert-canyon", kind: "environment", tags: ["sunset"] },
-  { id: "style-cinematic", label: "Cinematic", token: "cinematic", kind: "style", tags: ["film", "high-contrast"] },
-  { id: "style-analog", label: "Analog Film", token: "analog-film", kind: "style", tags: ["grain"] },
-  { id: "ref-golden-hour", label: "Golden Hour", token: "golden-hour", kind: "reference", tags: ["lighting"] },
-];
+type AssetLike = {
+  id: string;
+  name?: string;
+  kind?: "video" | "audio" | "image";
+};
 
-function sanitizeToken(value: string): string {
+type BuildMentionCandidatesInput = {
+  assets: AssetLike[];
+};
+
+function toToken(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -21,41 +18,25 @@ function sanitizeToken(value: string): string {
     .slice(0, 32);
 }
 
-export function buildMentionCandidates(projectAssets: MentionAssetSource[]): MentionCandidate[] {
-  const assetCandidates: MentionCandidate[] = projectAssets
-    .filter((asset) => asset.kind !== "audio")
-    .map((asset) => {
-      const rawLabel = asset.name?.trim() || asset.id;
-      const token = sanitizeToken(rawLabel) || sanitizeToken(asset.id) || `asset-${asset.id}`;
-      return {
-        id: `asset-${asset.id}`,
-        label: rawLabel,
-        token,
-        kind: "asset",
-        tags: [asset.kind, "project"],
-      };
+export function buildMentionCandidates(input: BuildMentionCandidatesInput): MentionCandidate[] {
+  const result: MentionCandidate[] = [];
+  for (const asset of input.assets) {
+    const label = asset.name?.trim() || asset.id;
+    result.push({
+      id: `asset-${asset.id}`,
+      label,
+      token: toToken(label) || `asset-${result.length + 1}`,
+      kind: "asset",
+      tags: [asset.kind ?? "media"],
     });
-
-  const merged = [...SEEDED_MENTIONS, ...assetCandidates];
-  const dedup = new Map<string, MentionCandidate>();
-  for (const item of merged) {
-    dedup.set(item.id, item);
   }
-  return [...dedup.values()];
+  return result;
 }
 
-export function findMentionSuggestions(
-  query: string,
-  candidates: MentionCandidate[],
-  limit = 8,
-): MentionCandidate[] {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return candidates.slice(0, limit);
-
+export function findMentionSuggestions(query: string, candidates: MentionCandidate[], limit: number): MentionCandidate[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return candidates.slice(0, Math.max(1, limit));
   return candidates
-    .filter((candidate) => {
-      const haystack = `${candidate.label} ${candidate.token} ${candidate.tags.join(" ")}`.toLowerCase();
-      return haystack.includes(normalized);
-    })
-    .slice(0, limit);
+    .filter((candidate) => candidate.token.includes(q) || candidate.label.toLowerCase().includes(q))
+    .slice(0, Math.max(1, limit));
 }

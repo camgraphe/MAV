@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mav.local/schemas/project.v3.json",
+  "title": "MAV Project v3",
+  "type": "object",
+  "required": ["schemaVersion", "meta", "timeline", "assets", "aiGeneration"],
+  "properties": {
+    "schemaVersion": { "const": "mav.project.v3" },
+    "meta": {
+      "type": "object",
+      "required": ["projectId", "createdAt", "updatedAt", "fps", "width", "height"],
+      "properties": {
+        "projectId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "fps": { "type": "number", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 16 },
+        "height": { "type": "integer", "minimum": 16 }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "url"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["video", "audio", "image"] },
+          "url": { "type": "string" },
+          "durationMs": { "type": "number", "minimum": 0 },
+          "hasAudio": { "type": "boolean" }
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "required": ["durationMs", "tracks"],
+      "properties": {
+        "durationMs": { "type": "number", "minimum": 0 },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "clips"],
+            "properties": {
+              "id": { "type": "string" },
+              "kind": { "enum": ["video", "overlay", "audio"] },
+              "muted": { "type": "boolean" },
+              "locked": { "type": "boolean" },
+              "visible": { "type": "boolean" },
+              "clips": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "required": ["id", "type", "assetId", "startMs", "durationMs", "inMs", "outMs"],
+                      "properties": {
+                        "id": { "type": "string" },
+                        "type": { "const": "media" },
+                        "assetId": { "type": "string" },
+                        "startMs": { "type": "number", "minimum": 0 },
+                        "durationMs": { "type": "number", "minimum": 0 },
+                        "inMs": { "type": "number", "minimum": 0 },
+                        "outMs": { "type": "number", "minimum": 0 }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": ["id", "type", "startMs", "durationMs", "inMs", "outMs", "intent", "intentRender"],
+                      "properties": {
+                        "id": { "type": "string" },
+                        "type": { "const": "intent" },
+                        "assetId": { "type": ["string", "null"] },
+                        "startMs": { "type": "number", "minimum": 0 },
+                        "durationMs": { "type": "number", "minimum": 0 },
+                        "inMs": { "type": "number", "minimum": 0 },
+                        "outMs": { "type": "number", "minimum": 0 },
+                        "intent": { "type": "object" },
+                        "intentRender": { "type": "object" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "aiGeneration": {
+      "type": "object",
+      "required": ["selectedClipId", "referenceBank"],
+      "properties": {
+        "selectedClipId": { "type": ["string", "null"] },
+        "referenceBank": {
+          "type": "object",
+          "required": ["characters", "objects"],
+          "properties": {
+            "characters": { "type": "array", "items": { "type": "object" } },
+            "objects": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      }
+    }
+  }
+}

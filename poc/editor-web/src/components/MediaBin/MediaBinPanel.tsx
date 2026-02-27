@@ -18,10 +18,16 @@ type MediaAsset = {
 type MediaBinPanelProps = {
   assets: MediaAsset[];
   activeAssetId: string | null;
+  intentTemplates: Array<{
+    kind: "hook" | "scene" | "outro" | "vo" | "music" | "sfx";
+    label: string;
+    durationMs: number;
+  }>;
   onUpload: (file: File | null) => void;
   onActivateAsset: (assetId: string) => void;
   onOpenInSourceMonitor?: (assetId: string) => void;
   onAddToTimeline: (assetId: string) => void;
+  onAddIntentToTimeline: (kind: "hook" | "scene" | "outro" | "vo" | "music" | "sfx") => void;
   onAssetDragStart?: (payload: {
     assetId: string;
     kind: "video" | "audio" | "image";
@@ -29,6 +35,12 @@ type MediaBinPanelProps = {
     hasAudio?: boolean;
   }) => void;
   onAssetDragEnd?: () => void;
+  onIntentDragStart?: (payload: {
+    kind: "hook" | "scene" | "outro" | "vo" | "music" | "sfx";
+    label: string;
+    durationMs: number;
+  }) => void;
+  onIntentDragEnd?: () => void;
 };
 
 function formatDuration(ms?: number) {
@@ -59,12 +71,16 @@ function isSyntheticThumbnail(value: string): boolean {
 export function MediaBinPanel({
   assets,
   activeAssetId,
+  intentTemplates,
   onUpload,
   onActivateAsset,
   onOpenInSourceMonitor,
   onAddToTimeline,
+  onAddIntentToTimeline,
   onAssetDragStart,
   onAssetDragEnd,
+  onIntentDragStart,
+  onIntentDragEnd,
 }: MediaBinPanelProps) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -114,6 +130,49 @@ export function MediaBinPanel({
         accept="video/mp4,video/*,image/*"
         onChange={(event) => onUpload(event.target.files?.[0] ?? null)}
       />
+
+      <section className="intentTemplatePanel">
+        <header>
+          <h3>Intent Blocks</h3>
+          <p className="hint">Drag empty blocks to timeline.</p>
+        </header>
+        <div className="intentTemplateGrid">
+          {intentTemplates.map((template) => {
+            const isAudio = template.kind === "vo" || template.kind === "music" || template.kind === "sfx";
+            return (
+              <article
+                key={template.kind}
+                className={`intentTemplateCard ${isAudio ? "audioIntent" : "videoIntent"}`}
+                draggable
+                onDragStart={(event) => {
+                  const payload = {
+                    kind: template.kind,
+                    label: template.label,
+                    durationMs: template.durationMs,
+                  };
+                  event.dataTransfer.setData("text/x-mav-intent-template", JSON.stringify(payload));
+                  event.dataTransfer.effectAllowed = "copy";
+                  onIntentDragStart?.(payload);
+                }}
+                onDragEnd={() => onIntentDragEnd?.()}
+              >
+                <div>
+                  <strong>{template.label}</strong>
+                  <small>{isAudio ? "Audio intent" : "Video intent"}</small>
+                </div>
+                <button
+                  type="button"
+                  className="iconBtn tiny"
+                  onClick={() => onAddIntentToTimeline(template.kind)}
+                  title={`Add ${template.label} block`}
+                >
+                  +
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      </section>
 
       <div className={`assetList ${viewMode === "grid" ? "gridMode" : "listMode"}`}>
         {visualAssets.length === 0 ? (

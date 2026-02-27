@@ -1,51 +1,22 @@
-export type EngineMode = "image" | "video";
-
-export type EngineId = "veo" | "sora" | "kling" | "luma" | "runway";
-
-export type AIGenSeedMode = "random" | "fixed";
-
-export type AIGenShotMode = "single" | "multi";
-
-export type AIGenMovementMode =
-  | "auto"
-  | "pan"
-  | "tilt"
-  | "dolly"
-  | "truck"
-  | "orbit"
-  | "handheld"
-  | "static";
-
-export type AIGenSpeedRampPreset = "none" | "linear" | "ease-in" | "ease-out" | "ease-in-out" | "custom";
-
-export type AIGenEasing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
-
-export type AIGenFramesMode = "none" | "start-only" | "end-only" | "start-end";
-
-export type AIGenFrameLocking = "none" | "soft" | "hard";
-
-export type AIGenInterpolationStyle = "default" | "morph" | "blend" | "direct";
-
-export type AIGenReferenceRole = "style" | "character" | "environment" | "other";
-
-export type AIGenReferenceKind = "image" | "video" | "frame";
-
-export type AIGenReferenceSource = "upload" | "timeline" | "source-monitor" | "last-frame" | "timecode";
-
-export type AIGenMentionKind = "character" | "prop" | "environment" | "style" | "reference" | "asset";
-
-export type AIGenCameraIntent = "handheld" | "cinematic" | "locked" | "documentary";
-
-export type AIGenCameraPreset = "neutral" | "cinematic" | "action" | "documentary";
-
 export type AIGenRightSidebarTab = "ai-generation" | "inspector";
 
-export type AIGenCurvePoint = {
-  x: number;
-  y: number;
-};
+export type IntentBlockKind = "hook" | "scene" | "outro" | "vo" | "music" | "sfx";
 
-export type AIGenFrameRef = {
+export type IntentRenderStatus = "draft" | "queued" | "generating" | "ready" | "failed";
+
+export type IntentRefStrength = "low" | "medium" | "high";
+
+export type IntentAnglePreset =
+  | "wide"
+  | "close-up"
+  | "ots-left"
+  | "ots-right"
+  | "low-angle"
+  | "high-angle"
+  | "profile-left"
+  | "profile-right";
+
+export type IntentFrameRef = {
   assetId: string | null;
   assetLabel: string;
   timeMs: number;
@@ -53,156 +24,84 @@ export type AIGenFrameRef = {
   source: "source-monitor" | "timeline-program";
 };
 
-export type AIGenMention = {
+export type IntentBankRef = {
   id: string;
   label: string;
-  kind: AIGenMentionKind;
-  token: string;
-  tags: string[];
+  thumbnailUrl: string | null;
+  source: "source-monitor" | "timeline-program";
+  assetId: string | null;
+  timeMs: number;
+  createdAt: string;
 };
 
-export type AIGenPromptConfig = {
-  text: string;
-  negativeText: string;
-  adherence: number;
-  seedMode: AIGenSeedMode;
-  seed: number | null;
-  variationCount: number;
-  mentions: AIGenMention[];
+export type IntentReferenceBank = {
+  characters: IntentBankRef[];
+  objects: IntentBankRef[];
 };
 
-export type AIGenEngineConfig = {
-  mode: EngineMode;
-  engineId: EngineId;
-  modelId: string;
-};
-
-export type AIGenOutputConfig = {
-  shotMode: AIGenShotMode;
-  aspectRatio: "1:1" | "4:5" | "9:16" | "16:9" | "21:9";
-  resolution: "720p" | "1080p" | "1440p" | "4k";
-  durationSec: number;
-  batchCount: number;
-  fps: 24 | 25 | 30 | 60;
-  upscale: boolean;
-  bestOf: number;
-  exportPreset: "none" | "tiktok" | "shorts" | "youtube" | "ads";
-};
-
-export type AIGenMotionConfig = {
-  movementMode: AIGenMovementMode;
-  intensity: number;
-  speedRampPreset: AIGenSpeedRampPreset;
-  customCurve: AIGenCurvePoint[];
-  segmentEasings: AIGenEasing[];
-  stabilization: boolean;
-  loopable: boolean;
-};
-
-export type AIGenDirectorConfig = {
-  lockIdentity: boolean;
-  genre: "none" | "action" | "drama" | "comedy" | "sci-fi" | "horror";
-  mood: "neutral" | "warm" | "dark" | "dreamy" | "tense";
-  sceneFlow: number;
-  cameraIntent: AIGenCameraIntent;
-  actionLevel: number;
-  chaosLevel: number;
-  emotionLevel: number;
-  continuity: boolean;
-};
-
-export type AIGenFramesConfig = {
-  mode: AIGenFramesMode;
-  startFrame: AIGenFrameRef | null;
-  endFrame: AIGenFrameRef | null;
-  frameLocking: AIGenFrameLocking;
-  interpolationStyle: AIGenInterpolationStyle;
-};
-
-export type AIGenReference = {
-  id: string;
-  role: AIGenReferenceRole;
-  kind: AIGenReferenceKind;
-  source: AIGenReferenceSource;
-  weight: number;
+export type IntentClipRef = {
+  bankRefId: string;
+  strength: IntentRefStrength;
   locked: boolean;
-  url: string;
-  label: string;
-  timeMs?: number;
 };
 
-export type AIGenReferencesConfig = {
-  items: AIGenReference[];
+export type IntentAudioIntent = {
+  text: string;
+  mood: string;
+  tempo: number;
+  intensity: number;
 };
 
-export type AIGenAdvancedConfig = {
-  lensPreset: "none" | "premium-modern-prime" | "classic-anamorphic" | "vintage-spherical";
-  focalLengthMm: number;
-  aperture: "f/1.4" | "f/2" | "f/2.8" | "f/4" | "f/8" | "f/11";
-  cameraPreset: AIGenCameraPreset;
+export type IntentOutputConfig = {
+  aspectRatio: "1:1" | "4:5" | "9:16" | "16:9" | "21:9";
+  durationSec: number;
+  fps: 24 | 25 | 30 | 60;
 };
 
-export type AIGenConfig = {
-  prompt: AIGenPromptConfig;
-  engine: AIGenEngineConfig;
-  output: AIGenOutputConfig;
-  motion: AIGenMotionConfig;
-  director: AIGenDirectorConfig;
-  frames: AIGenFramesConfig;
-  references: AIGenReferencesConfig;
-  advanced: AIGenAdvancedConfig;
+export type IntentMotionConfig = {
+  movement: "auto" | "pan" | "tilt" | "dolly" | "orbit" | "static";
+  intensity: number;
 };
 
-export type AIGenerationRequestRecord = {
-  id: string;
-  createdAt: string;
-  status: "queued";
-  configSnapshot: AIGenConfig;
-  effectiveConfig: AIGenConfig;
-  gatedOffFields: string[];
-  engineId: EngineId;
-  modelId: string;
-  mode: EngineMode;
-  batchCount: number;
-};
-
-export type PromptVersionRecord = {
-  id: string;
-  createdAt: string;
+export type IntentContract = {
+  blockKind: IntentBlockKind;
+  title: string;
   prompt: string;
   negativePrompt: string;
-  engineId: EngineId;
-  modelId: string;
-  seedMode: AIGenSeedMode;
-  seed: number | null;
+  firstFrame: IntentFrameRef | null;
+  endFrame: IntentFrameRef | null;
+  characterRefs: IntentClipRef[];
+  objectRefs: IntentClipRef[];
+  output: IntentOutputConfig;
+  motion: IntentMotionConfig;
+  anglePreset: IntentAnglePreset | null;
+  matchLensAndLighting: boolean;
+  audio: IntentAudioIntent;
+};
+
+export type IntentRenderVersion = {
+  id: string;
+  createdAt: string;
+  status: Exclude<IntentRenderStatus, "draft">;
+  contractSnapshot: IntentContract;
+  outputAssetId: string | null;
+  thumbnailUrl: string | null;
+  error: string | null;
+};
+
+export type IntentRenderState = {
+  status: IntentRenderStatus;
+  progressPct: number;
+  queuedAt: string | null;
+  activeVersionId: string | null;
+  versions: IntentRenderVersion[];
+  error: string | null;
+  hasDraftChanges: boolean;
 };
 
 export type AIGenerationState = {
-  current: AIGenConfig;
-  history: AIGenerationRequestRecord[];
-  promptVersions: PromptVersionRecord[];
-};
-
-export type AIGenPreset = {
-  id: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
-  config: AIGenConfig;
-};
-
-export type MentionCandidate = {
-  id: string;
-  label: string;
-  token: string;
-  kind: AIGenMentionKind;
-  tags: string[];
-};
-
-export type MentionAssetSource = {
-  id: string;
-  kind: "video" | "audio" | "image";
-  name?: string;
+  selectedClipId: string | null;
+  referenceBank: IntentReferenceBank;
 };
 
 export type AIGenerationSourceContext = {
@@ -221,4 +120,28 @@ export type LegacySilenceCutState = {
   summary: string | null;
   suggestionCount: number;
   canApply: boolean;
+};
+
+export type IntentCreateTemplate = {
+  kind: IntentBlockKind;
+  label: string;
+};
+
+// Compatibility aliases for existing modules while the editor migrates to intent-first naming.
+export type AIGenConfig = IntentContract;
+
+export type AIGenPreset = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  config: IntentContract;
+};
+
+export type MentionCandidate = {
+  id: string;
+  label: string;
+  token: string;
+  kind: "character" | "prop" | "environment" | "style" | "reference" | "asset";
+  tags: string[];
 };

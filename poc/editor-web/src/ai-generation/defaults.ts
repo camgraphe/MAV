@@ -1,15 +1,13 @@
 import type {
-  AIGenConfig,
-  AIGenCurvePoint,
-  AIGenFrameLocking,
-  AIGenFrameRef,
-  AIGenInterpolationStyle,
-  AIGenPreset,
-  AIGenerationRequestRecord,
   AIGenerationState,
-  PromptVersionRecord,
+  IntentBlockKind,
+  IntentContract,
+  IntentCreateTemplate,
+  IntentReferenceBank,
+  IntentRenderState,
 } from "./types";
 
+export const INTENT_RENDER_HISTORY_LIMIT = 24;
 export const AI_GENERATION_HISTORY_LIMIT = 100;
 export const AI_PROMPT_HISTORY_LIMIT = 150;
 export const AI_PRESET_LIMIT = 30;
@@ -18,287 +16,154 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function normalizeCurve(curve: AIGenCurvePoint[] | undefined): AIGenCurvePoint[] {
-  if (!Array.isArray(curve) || curve.length === 0) return createDefaultCurve();
-  const sorted = [...curve]
-    .map((point, index) => ({
-      x: Number.isFinite(point.x) ? point.x : index / Math.max(1, curve.length - 1),
-      y: Number.isFinite(point.y) ? point.y : 0.5,
-    }))
-    .sort((a, b) => a.x - b.x)
-    .slice(0, 5);
-
-  while (sorted.length < 5) {
-    const position = sorted.length / 4;
-    sorted.push({ x: position, y: position });
-  }
-
-  return sorted.map((point, index) => ({
-    x: index === 0 ? 0 : index === sorted.length - 1 ? 1 : clamp(point.x, 0, 1),
-    y: clamp(point.y, 0, 1),
-  }));
-}
-
-export function createDefaultCurve(): AIGenCurvePoint[] {
-  return [
-    { x: 0, y: 0 },
-    { x: 0.25, y: 0.3 },
-    { x: 0.5, y: 0.55 },
-    { x: 0.75, y: 0.82 },
-    { x: 1, y: 1 },
-  ];
-}
-
-export function createDefaultAIGenConfig(): AIGenConfig {
+export function createDefaultReferenceBank(): IntentReferenceBank {
   return {
-    prompt: {
-      text: "",
-      negativeText: "",
-      adherence: 70,
-      seedMode: "random",
-      seed: null,
-      variationCount: 4,
-      mentions: [],
-    },
-    engine: {
-      mode: "video",
-      engineId: "veo",
-      modelId: "veo-2",
-    },
+    characters: [],
+    objects: [],
+  };
+}
+
+function titleFromKind(kind: IntentBlockKind): string {
+  if (kind === "hook") return "Hook";
+  if (kind === "scene") return "Video Intent";
+  if (kind === "outro") return "Outro";
+  if (kind === "vo") return "Audio Intent";
+  if (kind === "music") return "Music";
+  return "SFX";
+}
+
+function promptFromKind(kind: IntentBlockKind): string {
+  if (kind === "hook") return "Strong opening visual with clear subject and movement.";
+  if (kind === "scene") return "Visual intent block for shots and sequence continuity.";
+  if (kind === "outro") return "Closing visual with clean ending and room for call-to-action.";
+  if (kind === "vo") return "Audio intent block for narration, music, or SFX direction.";
+  if (kind === "music") return "Background music bed matching scene emotion and rhythm.";
+  return "Focused sound effect accent for transition or emphasis.";
+}
+
+export function createDefaultIntentContract(kind: IntentBlockKind): IntentContract {
+  return {
+    blockKind: kind,
+    title: titleFromKind(kind),
+    prompt: promptFromKind(kind),
+    negativePrompt: "",
+    firstFrame: null,
+    endFrame: null,
+    characterRefs: [],
+    objectRefs: [],
     output: {
-      shotMode: "single",
       aspectRatio: "16:9",
-      resolution: "1080p",
-      durationSec: 5,
-      batchCount: 10,
+      durationSec: kind === "vo" || kind === "music" ? 8 : 5,
       fps: 30,
-      upscale: false,
-      bestOf: 1,
-      exportPreset: "none",
     },
     motion: {
-      movementMode: "auto",
+      movement: "auto",
       intensity: 50,
-      speedRampPreset: "custom",
-      customCurve: createDefaultCurve(),
-      segmentEasings: ["ease-in-out", "linear", "ease-in-out", "ease-out"],
-      stabilization: false,
-      loopable: false,
     },
-    director: {
-      lockIdentity: false,
-      genre: "none",
-      mood: "neutral",
-      sceneFlow: 50,
-      cameraIntent: "cinematic",
-      actionLevel: 50,
-      chaosLevel: 30,
-      emotionLevel: 50,
-      continuity: false,
-    },
-    frames: {
-      mode: "none",
-      startFrame: null,
-      endFrame: null,
-      frameLocking: "none",
-      interpolationStyle: "default",
-    },
-    references: {
-      items: [],
-    },
-    advanced: {
-      lensPreset: "none",
-      focalLengthMm: 50,
-      aperture: "f/2.8",
-      cameraPreset: "neutral",
+    anglePreset: null,
+    matchLensAndLighting: true,
+    audio: {
+      text: "",
+      mood: kind === "music" ? "uplifting" : "neutral",
+      tempo: 100,
+      intensity: 50,
     },
   };
 }
 
-function normalizeFrameRef(frame: AIGenFrameRef | null | undefined): AIGenFrameRef | null {
-  if (!frame) return null;
+export function createDefaultIntentRenderState(): IntentRenderState {
   return {
-    assetId: frame.assetId ?? null,
-    assetLabel: frame.assetLabel || "Unknown asset",
-    timeMs: Math.max(0, Math.round(frame.timeMs || 0)),
-    thumbnailUrl: frame.thumbnailUrl ?? null,
-    source: frame.source === "timeline-program" ? "timeline-program" : "source-monitor",
+    status: "draft",
+    progressPct: 0,
+    queuedAt: null,
+    activeVersionId: null,
+    versions: [],
+    error: null,
+    hasDraftChanges: false,
   };
-}
-
-function normalizeFrameLocking(value: AIGenFrameLocking | undefined): AIGenFrameLocking {
-  if (value === "soft" || value === "hard") return value;
-  return "none";
-}
-
-function normalizeInterpolationStyle(value: AIGenInterpolationStyle | undefined): AIGenInterpolationStyle {
-  if (value === "morph" || value === "blend" || value === "direct") return value;
-  return "default";
-}
-
-export function normalizeAIGenConfig(input: Partial<AIGenConfig> | undefined): AIGenConfig {
-  const defaults = createDefaultAIGenConfig();
-  if (!input) return defaults;
-  const prompt = input.prompt ?? defaults.prompt;
-  const engine = input.engine ?? defaults.engine;
-  const output = input.output ?? defaults.output;
-  const motion = input.motion ?? defaults.motion;
-  const director = input.director ?? defaults.director;
-  const frames = input.frames ?? defaults.frames;
-  const references = input.references ?? defaults.references;
-  const advanced = input.advanced ?? defaults.advanced;
-
-  const fps = output.fps === 24 || output.fps === 25 || output.fps === 30 || output.fps === 60
-    ? output.fps
-    : defaults.output.fps;
-
-  const bestOf = Math.max(1, Math.min(10, Math.round(output.bestOf || defaults.output.bestOf)));
-
-  return {
-    prompt: {
-      text: prompt.text ?? "",
-      negativeText: prompt.negativeText ?? "",
-      adherence: clamp(Math.round(prompt.adherence ?? defaults.prompt.adherence), 0, 100),
-      seedMode: prompt.seedMode === "fixed" ? "fixed" : "random",
-      seed:
-        typeof prompt.seed === "number" && Number.isFinite(prompt.seed)
-          ? Math.max(0, Math.round(prompt.seed))
-          : null,
-      variationCount: clamp(Math.round(prompt.variationCount ?? defaults.prompt.variationCount), 1, 16),
-      mentions: Array.isArray(prompt.mentions)
-        ? prompt.mentions
-            .filter((mention) => mention && typeof mention.id === "string")
-            .map((mention) => ({
-              id: mention.id,
-              label: mention.label || mention.id,
-              kind: mention.kind,
-              token: mention.token || mention.id,
-              tags: Array.isArray(mention.tags) ? mention.tags.filter((tag) => typeof tag === "string") : [],
-            }))
-        : [],
-    },
-    engine: {
-      mode: engine.mode === "image" ? "image" : "video",
-      engineId: engine.engineId ?? defaults.engine.engineId,
-      modelId: engine.modelId || defaults.engine.modelId,
-    },
-    output: {
-      shotMode: output.shotMode === "multi" ? "multi" : "single",
-      aspectRatio: output.aspectRatio ?? defaults.output.aspectRatio,
-      resolution: output.resolution ?? defaults.output.resolution,
-      durationSec: clamp(Math.round(output.durationSec ?? defaults.output.durationSec), 1, 30),
-      batchCount: clamp(Math.round(output.batchCount ?? defaults.output.batchCount), 1, 32),
-      fps,
-      upscale: Boolean(output.upscale),
-      bestOf,
-      exportPreset: output.exportPreset ?? defaults.output.exportPreset,
-    },
-    motion: {
-      movementMode: motion.movementMode ?? defaults.motion.movementMode,
-      intensity: clamp(Math.round(motion.intensity ?? defaults.motion.intensity), 0, 100),
-      speedRampPreset: motion.speedRampPreset ?? defaults.motion.speedRampPreset,
-      customCurve: normalizeCurve(motion.customCurve),
-      segmentEasings:
-        Array.isArray(motion.segmentEasings) && motion.segmentEasings.length >= 4
-          ? motion.segmentEasings.slice(0, 4)
-          : defaults.motion.segmentEasings,
-      stabilization: Boolean(motion.stabilization),
-      loopable: Boolean(motion.loopable),
-    },
-    director: {
-      lockIdentity: Boolean(director.lockIdentity),
-      genre: director.genre ?? defaults.director.genre,
-      mood: director.mood ?? defaults.director.mood,
-      sceneFlow: clamp(Math.round(director.sceneFlow ?? defaults.director.sceneFlow), 0, 100),
-      cameraIntent: director.cameraIntent ?? defaults.director.cameraIntent,
-      actionLevel: clamp(Math.round(director.actionLevel ?? defaults.director.actionLevel), 0, 100),
-      chaosLevel: clamp(Math.round(director.chaosLevel ?? defaults.director.chaosLevel), 0, 100),
-      emotionLevel: clamp(Math.round(director.emotionLevel ?? defaults.director.emotionLevel), 0, 100),
-      continuity: Boolean(director.continuity),
-    },
-    frames: {
-      mode: frames.mode ?? defaults.frames.mode,
-      startFrame: normalizeFrameRef(frames.startFrame),
-      endFrame: normalizeFrameRef(frames.endFrame),
-      frameLocking: normalizeFrameLocking(frames.frameLocking),
-      interpolationStyle: normalizeInterpolationStyle(frames.interpolationStyle),
-    },
-    references: {
-      items: Array.isArray(references.items)
-        ? references.items
-            .filter((item) => Boolean(item) && typeof item.id === "string" && typeof item.url === "string")
-            .map((item) => ({
-              ...item,
-              weight: clamp(Math.round(item.weight ?? 50), 0, 100),
-              locked: Boolean(item.locked),
-            }))
-        : [],
-    },
-    advanced: {
-      lensPreset: advanced.lensPreset ?? defaults.advanced.lensPreset,
-      focalLengthMm: clamp(Math.round(advanced.focalLengthMm ?? defaults.advanced.focalLengthMm), 10, 200),
-      aperture: advanced.aperture ?? defaults.advanced.aperture,
-      cameraPreset: advanced.cameraPreset ?? defaults.advanced.cameraPreset,
-    },
-  };
-}
-
-function trimHistory(history: AIGenerationRequestRecord[]): AIGenerationRequestRecord[] {
-  return history.slice(-AI_GENERATION_HISTORY_LIMIT);
-}
-
-function trimPromptHistory(history: PromptVersionRecord[]): PromptVersionRecord[] {
-  return history.slice(-AI_PROMPT_HISTORY_LIMIT);
 }
 
 export function createDefaultAIGenerationState(): AIGenerationState {
   return {
-    current: createDefaultAIGenConfig(),
-    history: [],
-    promptVersions: [],
+    selectedClipId: null,
+    referenceBank: createDefaultReferenceBank(),
+  };
+}
+
+export function normalizeIntentRenderState(input: Partial<IntentRenderState> | undefined): IntentRenderState {
+  const defaults = createDefaultIntentRenderState();
+  const status =
+    input?.status === "queued" ||
+    input?.status === "generating" ||
+    input?.status === "ready" ||
+    input?.status === "failed"
+      ? input.status
+      : "draft";
+  return {
+    status,
+    progressPct: clamp(Math.round(input?.progressPct ?? defaults.progressPct), 0, 100),
+    queuedAt: input?.queuedAt ?? null,
+    activeVersionId: input?.activeVersionId ?? null,
+    versions: Array.isArray(input?.versions) ? input.versions.slice(-INTENT_RENDER_HISTORY_LIMIT) : [],
+    error: input?.error ?? null,
+    hasDraftChanges: Boolean(input?.hasDraftChanges),
   };
 }
 
 export function normalizeAIGenerationState(input: AIGenerationState | undefined): AIGenerationState {
   if (!input) return createDefaultAIGenerationState();
-
-  const history = Array.isArray(input.history)
-    ? trimHistory(
-        input.history
-          .filter((entry) => entry && typeof entry.id === "string")
-          .map((entry) => ({
-            ...entry,
-            status: "queued" as const,
-            configSnapshot: normalizeAIGenConfig(entry.configSnapshot),
-            effectiveConfig: normalizeAIGenConfig(entry.effectiveConfig),
-            gatedOffFields: Array.isArray(entry.gatedOffFields)
-              ? entry.gatedOffFields.filter((field) => typeof field === "string")
-              : [],
-          })),
-      )
-    : [];
-
-  const promptVersions = Array.isArray(input.promptVersions)
-    ? trimPromptHistory(
-        input.promptVersions
-          .filter((entry) => entry && typeof entry.id === "string")
-          .map((entry) => ({
-            ...entry,
-            seed:
-              typeof entry.seed === "number" && Number.isFinite(entry.seed)
-                ? Math.max(0, Math.round(entry.seed))
-                : null,
-          })),
-      )
-    : [];
-
+  const characterRefs = Array.isArray(input.referenceBank?.characters) ? input.referenceBank.characters : [];
+  const objectRefs = Array.isArray(input.referenceBank?.objects) ? input.referenceBank.objects : [];
   return {
-    current: normalizeAIGenConfig(input.current),
-    history,
-    promptVersions,
+    selectedClipId: input.selectedClipId ?? null,
+    referenceBank: {
+      characters: characterRefs,
+      objects: objectRefs,
+    },
   };
 }
 
-export function trimPresetList(presets: AIGenPreset[]): AIGenPreset[] {
+export const INTENT_CREATE_TEMPLATES: IntentCreateTemplate[] = [
+  { kind: "scene", label: "Video Intent" },
+  { kind: "vo", label: "Audio Intent" },
+];
+
+// Compatibility helpers used by legacy modules/imports.
+export function normalizeAIGenConfig(input: Partial<IntentContract> | undefined): IntentContract {
+  const kind = input?.blockKind ?? "scene";
+  const defaults = createDefaultIntentContract(kind);
+  return {
+    ...defaults,
+    ...input,
+    blockKind: kind,
+    title: input?.title?.trim() ? input.title : defaults.title,
+    prompt: input?.prompt ?? defaults.prompt,
+    negativePrompt: input?.negativePrompt ?? defaults.negativePrompt,
+    firstFrame: input?.firstFrame ?? defaults.firstFrame,
+    endFrame: input?.endFrame ?? defaults.endFrame,
+    characterRefs: Array.isArray(input?.characterRefs) ? input.characterRefs : defaults.characterRefs,
+    objectRefs: Array.isArray(input?.objectRefs) ? input.objectRefs : defaults.objectRefs,
+    output: {
+      ...defaults.output,
+      ...(input?.output ?? {}),
+      durationSec: clamp(Math.round(input?.output?.durationSec ?? defaults.output.durationSec), 1, 30),
+    },
+    motion: {
+      ...defaults.motion,
+      ...(input?.motion ?? {}),
+      intensity: clamp(Math.round(input?.motion?.intensity ?? defaults.motion.intensity), 0, 100),
+    },
+    audio: {
+      ...defaults.audio,
+      ...(input?.audio ?? {}),
+      tempo: clamp(Math.round(input?.audio?.tempo ?? defaults.audio.tempo), 40, 220),
+      intensity: clamp(Math.round(input?.audio?.intensity ?? defaults.audio.intensity), 0, 100),
+    },
+    matchLensAndLighting:
+      typeof input?.matchLensAndLighting === "boolean" ? input.matchLensAndLighting : defaults.matchLensAndLighting,
+  };
+}
+
+export function trimPresetList<T>(presets: T[]): T[] {
   return presets.slice(0, AI_PRESET_LIMIT);
 }

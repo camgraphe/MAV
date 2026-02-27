@@ -39,6 +39,8 @@ type PreviewPanelProps = {
   onSourceRangeDragStart: (event: DragEvent<HTMLElement>) => void;
   onSourceScrub: (nextMs: number) => void;
   onSourceStepFrame: (direction: "forward" | "backward") => void;
+  intentOverlay: { title: string; status: string; progressPct: number } | null;
+  debugLines?: string[];
 };
 
 function formatClock(ms: number) {
@@ -91,6 +93,8 @@ export function PreviewPanel({
   onSourceRangeDragStart,
   onSourceScrub,
   onSourceStepFrame,
+  intentOverlay,
+  debugLines = [],
 }: PreviewPanelProps) {
   const showSourceMonitor = monitorMode === "source";
   const maxDuration = Math.max(1000, durationMs);
@@ -142,6 +146,20 @@ export function PreviewPanel({
             ) : (
               <canvas ref={programCanvasRef} width={960} height={540} className="previewCanvas" />
             )}
+            {!showSourceMonitor && intentOverlay ? (
+              <div className="intentProgramOverlay">
+                <strong>{intentOverlay.title || "Intent block"}</strong>
+                <span>Status: {intentOverlay.status}</span>
+                <span>Progress: {Math.max(0, Math.min(100, Math.round(intentOverlay.progressPct)))}%</span>
+              </div>
+            ) : null}
+            {debugLines.length > 0 ? (
+              <div className="previewDebugOverlay">
+                {debugLines.map((line) => (
+                  <span key={line}>{line}</span>
+                ))}
+              </div>
+            ) : null}
           </div>
           {showSourceMonitor ? (
             <div className="sourceControls">

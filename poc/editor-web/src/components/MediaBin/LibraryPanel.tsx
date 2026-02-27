@@ -1,22 +1,24 @@
 import type { ReactNode } from "react";
 
-export type LibraryTab = "media" | "audio" | "text" | "stickers" | "effects";
+export type LibraryTab = "media" | "references" | "audio" | "text" | "stickers" | "effects";
 
 type LibraryPanelProps = {
   activeTab: LibraryTab;
   onTabChange: (tab: LibraryTab) => void;
   mediaContent: ReactNode;
+  referencesContent?: ReactNode;
 };
 
 const tabs: Array<{ id: LibraryTab; label: string; icon: string; enabled: boolean }> = [
   { id: "media", label: "Media", icon: "🎞", enabled: true },
+  { id: "references", label: "References", icon: "🧭", enabled: true },
   { id: "audio", label: "Audio", icon: "🎵", enabled: false },
   { id: "text", label: "Text", icon: "T", enabled: false },
   { id: "stickers", label: "Stickers", icon: "😊", enabled: false },
   { id: "effects", label: "Effects", icon: "✨", enabled: false },
 ];
 
-export function LibraryPanel({ activeTab, onTabChange, mediaContent }: LibraryPanelProps) {
+export function LibraryPanel({ activeTab, onTabChange, mediaContent, referencesContent }: LibraryPanelProps) {
   return (
     <div className="libraryPanel">
       <div className="libraryTabs" role="tablist" aria-label="Library tabs">
@@ -39,7 +41,8 @@ export function LibraryPanel({ activeTab, onTabChange, mediaContent }: LibraryPa
 
       <div className="libraryContent">
         {activeTab === "media" ? mediaContent : null}
-        {activeTab !== "media" ? (
+        {activeTab === "references" ? referencesContent ?? null : null}
+        {activeTab !== "media" && activeTab !== "references" ? (
           <section>
             <h2>Soon</h2>
             <p className="hint">Feature not enabled yet.</p>
