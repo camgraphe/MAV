@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent as ReactDragEvent } from "react";
-import projectSchema from "../contracts/project.schema.v1.json";
+import projectSchema from "../contracts/project.schema.v2.json";
 import type {
   DecodeWorkerInMessage,
   DecodeWorkerOutMessage,
@@ -12,11 +12,30 @@ import { ProjectSettingsModal } from "./components/EditorShell/ProjectSettingsMo
 import { TimelinePanel } from "./components/Timeline/TimelinePanel";
 import { PreviewPanel } from "./components/Preview/PreviewPanel";
 import { InspectorPanel } from "./components/Inspector/InspectorPanel";
+import { RightSidebarPanel } from "./components/Inspector/RightSidebarPanel";
 import { MediaBinPanel } from "./components/MediaBin/MediaBinPanel";
 import { LibraryPanel } from "./components/MediaBin/LibraryPanel";
+import { AIGenerationPanel } from "./components/AIGeneration/AIGenerationPanel";
 import { DiagnosticsPanel } from "./components/Diagnostics/DiagnosticsPanel";
 import { ExportModal } from "./components/Export/ExportModal";
 import { analyzeMediaFile, captureQuickVideoThumbnail } from "./preview/media-analysis";
+import {
+  AI_GENERATION_HISTORY_LIMIT,
+  AI_PROMPT_HISTORY_LIMIT,
+  createDefaultAIGenerationState,
+  normalizeAIGenConfig,
+  normalizeAIGenerationState,
+} from "./ai-generation/defaults";
+import { buildEffectiveConfig, ensureModelForEngine } from "./ai-generation/capabilities";
+import { buildMentionCandidates } from "./ai-generation/mentions";
+import { readAIGenPresets, removeAIGenPreset, saveAIGenPreset } from "./ai-generation/storage";
+import type {
+  AIGenConfig,
+  AIGenPreset,
+  AIGenRightSidebarTab,
+  AIGenerationState,
+  AIGenerationSourceContext,
+} from "./ai-generation/types";
 import {
   runSilenceCutPlugin,
   type SilenceCutPluginInput,
@@ -70,7 +89,7 @@ type Track = {
 };
 
 type ProjectState = {
-  schemaVersion: "mav.project.v0" | "mav.project.v1";
+  schemaVersion: "mav.project.v0" | "mav.project.v1" | "mav.project.v2";
   meta: {
     projectId: string;
     createdAt: string;
@@ -84,6 +103,7 @@ type ProjectState = {
     durationMs: number;
     tracks: Track[];
   };
+  aiGeneration: AIGenerationState;
 };
 
 type Asset = {
@@ -352,6 +372,7 @@ const STORAGE_KEY = "mav.poc.editor.state.v2";
 const ANALYSIS_CACHE_KEY = "mav.poc.editor.analysis-cache.v1";
 const EXPORT_SESSION_KEY = "mav.poc.editor.export-session.v1";
 const EDITOR_LAYOUT_STORAGE_KEY = "mav.editor.layout.v1";
+const RIGHT_SIDEBAR_TAB_STORAGE_KEY = "mav.editor.right-tab.v1";
 const SOURCE_RANGE_STORAGE_KEY = "mav.source.ranges.v1";
 const MIN_CLIP_DURATION_MS = 100;
 const DEFAULT_QA_SCENARIOS = 50;
@@ -775,7 +796,7 @@ function normalizeClipVisual(trackKind: TrackKind, clip: Clip): ClipVisual | und
 function createInitialProject(): ProjectState {
   const now = new Date().toISOString();
   return {
-    schemaVersion: "mav.project.v1",
+    schemaVersion: "mav.project.v2",
     meta: {
       projectId: "poc-project",
       createdAt: now,
@@ -814,6 +835,7 @@ function createInitialProject(): ProjectState {
         },
       ],
     },
+    aiGeneration: createDefaultAIGenerationState(),
   };
 }
 
@@ -859,10 +881,15 @@ function normalizeProject(project: ProjectState): ProjectState {
       ? Math.max(0, Math.round(project.timeline.durationMs))
       : 0;
   const durationMs = Math.max(1000, requestedDurationMs, maxClipEndMs);
+  const normalizedAIGeneration = normalizeAIGenerationState(project.aiGeneration);
+  const ensuredModelId = ensureModelForEngine(
+    normalizedAIGeneration.current.engine.engineId,
+    normalizedAIGeneration.current.engine.modelId,
+  );
 
   return {
     ...project,
-    schemaVersion: "mav.project.v1",
+    schemaVersion: "mav.project.v2",
     meta: {
       ...project.meta,
       updatedAt: new Date().toISOString(),
@@ -871,6 +898,16 @@ function normalizeProject(project: ProjectState): ProjectState {
     timeline: {
       durationMs,
       tracks,
+    },
+    aiGeneration: {
+      ...normalizedAIGeneration,
+      current: normalizeAIGenConfig({
+        ...normalizedAIGeneration.current,
+        engine: {
+          ...normalizedAIGeneration.current.engine,
+          modelId: ensuredModelId,
+        },
+      }),
     },
   };
 }
@@ -1418,7 +1455,17 @@ function buildQATargets(durationUs: number, count: number, seed: number): number
 export default function App() {
   const [project, setProject] = useState<ProjectState>(createInitialProject);
   const [playheadMs, setPlayheadMs] = useState(1200);
-  const [libraryTab, setLibraryTab] = useState<"media" | "audio" | "text" | "stickers" | "effects" | "ai">("media");
+  const [libraryTab, setLibraryTab] = useState<"media" | "audio" | "text" | "stickers" | "effects">("media");
+  const [rightSidebarTab, setRightSidebarTab] = useState<AIGenRightSidebarTab>(() => {
+    if (typeof window === "undefined") return "ai-generation";
+    try {
+      const raw = window.localStorage.getItem(RIGHT_SIDEBAR_TAB_STORAGE_KEY);
+      return raw === "inspector" ? "inspector" : "ai-generation";
+    } catch {
+      return "ai-generation";
+    }
+  });
+  const [aiPresets, setAiPresets] = useState<AIGenPreset[]>(() => readAIGenPresets());
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selectedClipKeys, setSelectedClipKeys] = useState<string[]>([]);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(80);
@@ -1690,6 +1737,33 @@ export default function App() {
       ),
     [project.timeline.tracks],
   );
+  const mentionCandidates = useMemo(
+    () =>
+      buildMentionCandidates(
+        project.assets.map((asset) => ({
+          id: asset.id,
+          kind: asset.kind,
+          name: asset.name,
+        })),
+      ),
+    [project.assets],
+  );
+  const aiGenerationSourceContext = useMemo<AIGenerationSourceContext>(() => {
+    const sourceAsset = activeAssetId ? project.assets.find((asset) => asset.id === activeAssetId) ?? null : null;
+    const sourceThumbnail = sourceAsset?.heroThumbnail ?? sourceAsset?.thumbnails?.[0] ?? null;
+    const timelineAsset = programAssetId ? project.assets.find((asset) => asset.id === programAssetId) ?? null : null;
+    const timelineThumbnail = timelineAsset?.heroThumbnail ?? timelineAsset?.thumbnails?.[0] ?? null;
+    return {
+      sourceAssetId: sourceAsset?.id ?? null,
+      sourceAssetLabel: sourceAsset?.name ?? sourceAsset?.id ?? "Source",
+      sourcePlayheadMs,
+      sourceThumbnailUrl: sourceThumbnail,
+      timelineAssetId: timelineAsset?.id ?? null,
+      timelineAssetLabel: timelineAsset?.name ?? timelineAsset?.id ?? "Timeline",
+      timelinePlayheadMs: playheadMs,
+      timelineThumbnailUrl: timelineThumbnail,
+    };
+  }, [activeAssetId, playheadMs, programAssetId, project.assets, sourcePlayheadMs]);
 
   const clipExists = (trackId: string, clipId: string) =>
     project.timeline.tracks.some((track) => track.id === trackId && track.clips.some((clip) => clip.id === clipId));
@@ -3156,6 +3230,95 @@ export default function App() {
     setLog(`Applied AI result: silence-cut-v1 (${appliedCount} clip(s)).`);
   };
 
+  const setAIGenerationConfig = (nextConfig: AIGenConfig) => {
+    const normalized = normalizeAIGenConfig(nextConfig);
+    setProjectWithNormalize(
+      (prev) => ({
+        ...prev,
+        aiGeneration: {
+          ...prev.aiGeneration,
+          current: normalized,
+        },
+      }),
+      { recordHistory: false },
+    );
+  };
+
+  const queueAIGenerationRequest = () => {
+    const configSnapshot = normalizeAIGenConfig(project.aiGeneration.current);
+    if (configSnapshot.prompt.text.trim().length === 0) {
+      setLog("AI generation blocked: add a scene prompt.");
+      return;
+    }
+
+    const { effectiveConfig, gatedOffFields } = buildEffectiveConfig(configSnapshot);
+    const requestId = `aigen-${crypto.randomUUID().slice(0, 8)}`;
+    const now = new Date().toISOString();
+
+    const requestRecord = {
+      id: requestId,
+      createdAt: now,
+      status: "queued" as const,
+      configSnapshot,
+      effectiveConfig,
+      gatedOffFields,
+      engineId: effectiveConfig.engine.engineId,
+      modelId: effectiveConfig.engine.modelId,
+      mode: effectiveConfig.engine.mode,
+      batchCount: effectiveConfig.output.batchCount,
+    };
+
+    const promptVersion = {
+      id: `prompt-${crypto.randomUUID().slice(0, 8)}`,
+      createdAt: now,
+      prompt: configSnapshot.prompt.text,
+      negativePrompt: configSnapshot.prompt.negativeText,
+      engineId: configSnapshot.engine.engineId,
+      modelId: configSnapshot.engine.modelId,
+      seedMode: configSnapshot.prompt.seedMode,
+      seed: configSnapshot.prompt.seed,
+    };
+
+    setProjectWithNormalize(
+      (prev) => ({
+        ...prev,
+        aiGeneration: {
+          ...prev.aiGeneration,
+          current: configSnapshot,
+          history: [...prev.aiGeneration.history, requestRecord].slice(-AI_GENERATION_HISTORY_LIMIT),
+          promptVersions: [...prev.aiGeneration.promptVersions, promptVersion].slice(-AI_PROMPT_HISTORY_LIMIT),
+        },
+      }),
+      { recordHistory: false },
+    );
+
+    const gatedSuffix =
+      gatedOffFields.length > 0 ? ` (${gatedOffFields.length} field(s) gated: ${gatedOffFields.join(", ")})` : "";
+    setLog(`AI generation queued: ${requestId}${gatedSuffix}`);
+  };
+
+  const applyAIGenPresetById = (presetId: string) => {
+    const preset = aiPresets.find((item) => item.id === presetId);
+    if (!preset) {
+      setLog("Preset not found.");
+      return;
+    }
+    setAIGenerationConfig(preset.config);
+    setLog(`AI preset applied: ${preset.name}`);
+  };
+
+  const saveAIGenPresetByName = (name: string) => {
+    setAiPresets((prev) => saveAIGenPreset(prev, name, project.aiGeneration.current));
+    setLog(`AI preset saved: ${name.trim() || "Untitled preset"}`);
+  };
+
+  const deleteAIGenPresetById = (presetId: string) => {
+    const preset = aiPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setAiPresets((prev) => removeAIGenPreset(prev, presetId));
+    setLog(`AI preset deleted: ${preset.name}`);
+  };
+
   const updateSelectedTiming = (patch: Partial<Pick<Clip, "startMs" | "durationMs" | "inMs" | "outMs">>) => {
     if (!selection) return;
     const refs = expandClipRefsWithLinks(project, [selection]);
@@ -3266,7 +3429,11 @@ export default function App() {
 
     try {
       const parsed = JSON.parse(raw) as ProjectState;
-      if (parsed.schemaVersion !== "mav.project.v0" && parsed.schemaVersion !== "mav.project.v1") {
+      if (
+        parsed.schemaVersion !== "mav.project.v0" &&
+        parsed.schemaVersion !== "mav.project.v1" &&
+        parsed.schemaVersion !== "mav.project.v2"
+      ) {
         setLog("Saved project schema is not supported.");
         return;
       }
@@ -3871,6 +4038,14 @@ export default function App() {
       // Ignore local storage errors; source ranges still work in memory.
     }
   }, [sourceRangesByAsset]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(RIGHT_SIDEBAR_TAB_STORAGE_KEY, rightSidebarTab);
+    } catch {
+      // Ignore local storage errors; tab state remains in memory.
+    }
+  }, [rightSidebarTab]);
 
   useEffect(() => {
     const worker = new Worker(new URL("./preview/media-analysis.worker.ts", import.meta.url), {
@@ -5696,15 +5871,6 @@ export default function App() {
           <LibraryPanel
             activeTab={libraryTab}
             onTabChange={setLibraryTab}
-            hasVideoAsset={project.assets.some((asset) => asset.kind === "video")}
-            aiJobStatus={aiJobStatus}
-            aiSummary={aiSummary}
-            aiSuggestionCount={aiSuggestionCount}
-            canApplyAi={canApplyAiResult}
-            onRunSilenceCut={() => {
-              void runSilenceCutAiPlugin();
-            }}
-            onApplyAiResult={applySilenceCutResult}
             mediaContent={(
               <MediaBinPanel
                 assets={project.assets}
@@ -5782,14 +5948,45 @@ export default function App() {
           />
         )}
         inspector={(
-          <InspectorPanel
-            selectedClip={selectedClip}
-            selectedClipRole={selectedClipRole}
-            selectedCount={selectedClipCount}
-            onUpdateTiming={updateSelectedTiming}
-            onUpdateVisual={updateSelectedVisual}
-            onResetVisual={resetSelectedVisual}
-            onAdaptToFrame={adaptSelectedVisualToFrame}
+          <RightSidebarPanel
+            activeTab={rightSidebarTab}
+            onTabChange={setRightSidebarTab}
+            aiGeneration={(
+              <AIGenerationPanel
+                config={project.aiGeneration.current}
+                history={project.aiGeneration.history}
+                promptVersions={project.aiGeneration.promptVersions}
+                presets={aiPresets}
+                mentionCandidates={mentionCandidates}
+                sourceContext={aiGenerationSourceContext}
+                legacySilenceCut={{
+                  status: aiJobStatus,
+                  summary: aiSummary,
+                  suggestionCount: aiSuggestionCount,
+                  canApply: canApplyAiResult,
+                }}
+                onConfigChange={setAIGenerationConfig}
+                onGenerate={queueAIGenerationRequest}
+                onApplyPreset={applyAIGenPresetById}
+                onSavePreset={saveAIGenPresetByName}
+                onDeletePreset={deleteAIGenPresetById}
+                onRunLegacySilenceCut={() => {
+                  void runSilenceCutAiPlugin();
+                }}
+                onApplyLegacySilenceCut={applySilenceCutResult}
+              />
+            )}
+            inspector={(
+              <InspectorPanel
+                selectedClip={selectedClip}
+                selectedClipRole={selectedClipRole}
+                selectedCount={selectedClipCount}
+                onUpdateTiming={updateSelectedTiming}
+                onUpdateVisual={updateSelectedVisual}
+                onResetVisual={resetSelectedVisual}
+                onAdaptToFrame={adaptSelectedVisualToFrame}
+              />
+            )}
           />
         )}
         timeline={(

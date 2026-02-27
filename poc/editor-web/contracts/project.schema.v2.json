@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mav.local/schemas/project.v2.json",
+  "title": "MAV Project v2",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "meta",
+    "timeline",
+    "assets",
+    "aiGeneration"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "mav.project.v2"
+    },
+    "meta": {
+      "type": "object",
+      "required": ["projectId", "createdAt", "updatedAt", "fps", "width", "height"],
+      "properties": {
+        "projectId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "fps": { "type": "number", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 16 },
+        "height": { "type": "integer", "minimum": 16 }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "url"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["video", "audio", "image"] },
+          "url": { "type": "string" },
+          "durationMs": { "type": "number", "minimum": 0 },
+          "hasAudio": { "type": "boolean" }
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "required": ["durationMs", "tracks"],
+      "properties": {
+        "durationMs": { "type": "number", "minimum": 0 },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "clips"],
+            "properties": {
+              "id": { "type": "string" },
+              "kind": { "enum": ["video", "overlay", "audio"] },
+              "muted": { "type": "boolean" },
+              "locked": { "type": "boolean" },
+              "visible": { "type": "boolean" },
+              "clips": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "assetId",
+                    "startMs",
+                    "durationMs",
+                    "inMs",
+                    "outMs"
+                  ],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "assetId": { "type": "string" },
+                    "startMs": { "type": "number", "minimum": 0 },
+                    "durationMs": { "type": "number", "minimum": 0 },
+                    "inMs": { "type": "number", "minimum": 0 },
+                    "outMs": { "type": "number", "minimum": 0 },
+                    "mediaRole": { "enum": ["video", "audio", "overlay"] },
+                    "linkGroupId": { "type": "string" },
+                    "linkLocked": { "type": "boolean" },
+                    "volume": { "type": "number", "minimum": 0, "maximum": 2 },
+                    "transform": {
+                      "type": "object",
+                      "properties": {
+                        "x": { "type": "number" },
+                        "y": { "type": "number" },
+                        "scale": { "type": "number", "minimum": 0 },
+                        "rotation": { "type": "number" },
+                        "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+                      }
+                    },
+                    "visual": {
+                      "type": "object",
+                      "properties": {
+                        "x": { "type": "number" },
+                        "y": { "type": "number" },
+                        "scalePct": { "type": "number", "minimum": 1 },
+                        "rotationDeg": { "type": "number" },
+                        "opacityPct": { "type": "number", "minimum": 0, "maximum": 100 },
+                        "fitMode": { "enum": ["pixel-100", "adapt"] }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "aiGeneration": {
+      "type": "object",
+      "required": ["current", "history", "promptVersions"],
+      "properties": {
+        "current": {
+          "type": "object",
+          "required": ["prompt", "engine", "output", "motion", "director", "frames", "references", "advanced"],
+          "properties": {
+            "prompt": {
+              "type": "object",
+              "required": ["text", "negativeText", "adherence", "seedMode", "seed", "variationCount", "mentions"],
+              "properties": {
+                "text": { "type": "string" },
+                "negativeText": { "type": "string" },
+                "adherence": { "type": "number", "minimum": 0, "maximum": 100 },
+                "seedMode": { "enum": ["random", "fixed"] },
+                "seed": { "type": ["number", "null"] },
+                "variationCount": { "type": "number", "minimum": 1, "maximum": 16 },
+                "mentions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "label", "kind", "token", "tags"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "label": { "type": "string" },
+                      "kind": { "type": "string" },
+                      "token": { "type": "string" },
+                      "tags": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "engine": {
+              "type": "object",
+              "required": ["mode", "engineId", "modelId"],
+              "properties": {
+                "mode": { "enum": ["image", "video"] },
+                "engineId": { "enum": ["veo", "sora", "kling", "luma", "runway"] },
+                "modelId": { "type": "string" }
+              }
+            },
+            "output": {
+              "type": "object",
+              "required": ["shotMode", "aspectRatio", "resolution", "durationSec", "batchCount", "fps", "upscale", "bestOf", "exportPreset"],
+              "properties": {
+                "shotMode": { "enum": ["single", "multi"] },
+                "aspectRatio": { "type": "string" },
+                "resolution": { "type": "string" },
+                "durationSec": { "type": "number", "minimum": 1 },
+                "batchCount": { "type": "number", "minimum": 1 },
+                "fps": { "type": "number" },
+                "upscale": { "type": "boolean" },
+                "bestOf": { "type": "number", "minimum": 1 },
+                "exportPreset": { "type": "string" }
+              }
+            },
+            "motion": {
+              "type": "object",
+              "required": ["movementMode", "intensity", "speedRampPreset", "customCurve", "segmentEasings", "stabilization", "loopable"],
+              "properties": {
+                "movementMode": { "type": "string" },
+                "intensity": { "type": "number", "minimum": 0, "maximum": 100 },
+                "speedRampPreset": { "type": "string" },
+                "customCurve": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["x", "y"],
+                    "properties": {
+                      "x": { "type": "number" },
+                      "y": { "type": "number" }
+                    }
+                  }
+                },
+                "segmentEasings": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "stabilization": { "type": "boolean" },
+                "loopable": { "type": "boolean" }
+              }
+            },
+            "director": {
+              "type": "object",
+              "required": ["lockIdentity", "genre", "mood", "sceneFlow", "cameraIntent", "actionLevel", "chaosLevel", "emotionLevel", "continuity"],
+              "properties": {
+                "lockIdentity": { "type": "boolean" },
+                "genre": { "type": "string" },
+                "mood": { "type": "string" },
+                "sceneFlow": { "type": "number" },
+                "cameraIntent": { "type": "string" },
+                "actionLevel": { "type": "number" },
+                "chaosLevel": { "type": "number" },
+                "emotionLevel": { "type": "number" },
+                "continuity": { "type": "boolean" }
+              }
+            },
+            "frames": {
+              "type": "object",
+              "required": ["mode", "startFrame", "endFrame", "frameLocking", "interpolationStyle"],
+              "properties": {
+                "mode": { "type": "string" },
+                "startFrame": { "type": ["object", "null"] },
+                "endFrame": { "type": ["object", "null"] },
+                "frameLocking": { "type": "string" },
+                "interpolationStyle": { "type": "string" }
+              }
+            },
+            "references": {
+              "type": "object",
+              "required": ["items"],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "role", "kind", "source", "weight", "locked", "url", "label"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "role": { "type": "string" },
+                      "kind": { "type": "string" },
+                      "source": { "type": "string" },
+                      "weight": { "type": "number", "minimum": 0, "maximum": 100 },
+                      "locked": { "type": "boolean" },
+                      "url": { "type": "string" },
+                      "label": { "type": "string" },
+                      "timeMs": { "type": "number", "minimum": 0 }
+                    }
+                  }
+                }
+              }
+            },
+            "advanced": {
+              "type": "object",
+              "required": ["lensPreset", "focalLengthMm", "aperture", "cameraPreset"],
+              "properties": {
+                "lensPreset": { "type": "string" },
+                "focalLengthMm": { "type": "number", "minimum": 1 },
+                "aperture": { "type": "string" },
+                "cameraPreset": { "type": "string" }
+              }
+            }
+          }
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "createdAt", "status", "configSnapshot", "effectiveConfig", "gatedOffFields", "engineId", "modelId", "mode", "batchCount"],
+            "properties": {
+              "id": { "type": "string" },
+              "createdAt": { "type": "string", "format": "date-time" },
+              "status": { "enum": ["queued"] },
+              "configSnapshot": { "type": "object" },
+              "effectiveConfig": { "type": "object" },
+              "gatedOffFields": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "engineId": { "type": "string" },
+              "modelId": { "type": "string" },
+              "mode": { "type": "string" },
+              "batchCount": { "type": "number", "minimum": 1 }
+            }
+          }
+        },
+        "promptVersions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "createdAt", "prompt", "negativePrompt", "engineId", "modelId", "seedMode", "seed"],
+            "properties": {
+              "id": { "type": "string" },
+              "createdAt": { "type": "string", "format": "date-time" },
+              "prompt": { "type": "string" },
+              "negativePrompt": { "type": "string" },
+              "engineId": { "type": "string" },
+              "modelId": { "type": "string" },
+              "seedMode": { "type": "string" },
+              "seed": { "type": ["number", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

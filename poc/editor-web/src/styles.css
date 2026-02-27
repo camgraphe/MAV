@@ -1552,6 +1552,328 @@ select {
   gap: 4px;
 }
 
+.rightSidebarPanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+}
+
+.rightSidebarTabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.rightSidebarTabs button {
+  background: #1a2a3d;
+  border-color: #314760;
+  color: #b8cbe3;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.rightSidebarTabs .activeRightSidebarTab {
+  background: #234566;
+  border-color: #57b2ff;
+  color: #ebf5ff;
+}
+
+.rightSidebarContent {
+  min-height: 0;
+  overflow: auto;
+}
+
+.aiGenerationPanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+.aiGenHeader {
+  margin-bottom: 0;
+}
+
+.aiGenAccordion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.aiGenSection {
+  border: 1px solid #2f4360;
+  border-radius: 9px;
+  background: #132132;
+  overflow: visible;
+}
+
+.aiGenSectionHeader {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #253952;
+  background: #1b2b40;
+  color: #dceafc;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.aiGenSectionHeader:hover {
+  background: #1d3048;
+}
+
+.aiGenSectionTitleWrap {
+  display: grid;
+  gap: 2px;
+}
+
+.aiGenSectionTitleWrap strong {
+  font-size: 13px;
+}
+
+.aiGenSectionTitleWrap small {
+  font-size: 11px;
+  color: #98aec8;
+}
+
+.aiGenSectionBody {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.aiGenField {
+  display: grid;
+  gap: 4px;
+}
+
+.aiGenField.isDisabled {
+  opacity: 0.72;
+}
+
+.aiGenFieldLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9db4d1;
+}
+
+.aiGenField textarea,
+.aiGenField input,
+.aiGenField select {
+  width: 100%;
+}
+
+.aiGenPromptInput {
+  resize: vertical;
+  min-height: 90px;
+}
+
+.aiMentionList {
+  border: 1px solid #355170;
+  border-radius: 8px;
+  background: #0f1b2a;
+  display: grid;
+  max-height: 190px;
+  overflow: auto;
+}
+
+.aiMentionItem {
+  border: 0;
+  border-bottom: 1px solid #243c58;
+  background: transparent;
+  color: #d7e8fb;
+  display: grid;
+  justify-items: start;
+  gap: 1px;
+  padding: 6px 8px;
+}
+
+.aiMentionItem:last-child {
+  border-bottom: 0;
+}
+
+.aiMentionItem:hover,
+.aiMentionItem.activeMention {
+  background: #1b3653;
+}
+
+.aiMentionItem small {
+  color: #9cb5d2;
+}
+
+.aiGenGrid {
+  display: grid;
+  gap: 8px;
+}
+
+.aiGenGrid.twoCols {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.aiGenGrid.threeCols {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
+.aiGenFieldset {
+  border: 1px solid #2f4562;
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.aiGenFieldset legend {
+  padding: 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9cb2cd;
+}
+
+.aiGenModeRow {
+  display: flex;
+  gap: 6px;
+}
+
+.aiGenModeRow button {
+  flex: 1;
+}
+
+.aiGenModeRow .activeMode {
+  background: #244865;
+  border-color: #58b4ff;
+  color: #eef8ff;
+}
+
+.aiGenCapsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.aiGenTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid #355370;
+  background: #17314d;
+  color: #cbe5ff;
+}
+
+.aiCurveEditor {
+  border: 1px solid #2d4461;
+  border-radius: 8px;
+  background: #122133;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.aiCurveEditor label {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+}
+
+.aiFrameSummary {
+  border: 1px solid #2d4461;
+  border-radius: 8px;
+  background: #122133;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.aiReferenceList {
+  display: grid;
+  gap: 8px;
+}
+
+.aiReferenceItem {
+  border: 1px solid #2f4562;
+  border-radius: 8px;
+  padding: 8px;
+  background: #132336;
+  display: grid;
+  gap: 8px;
+}
+
+.aiReferenceItemMeta {
+  display: grid;
+  gap: 2px;
+}
+
+.aiReferenceItemMeta small {
+  color: #9bb3cf;
+}
+
+.aiReferenceItemControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.aiLegacyTools {
+  border: 1px solid #355170;
+  border-radius: 8px;
+  background: #122032;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.aiLegacyTools h3 {
+  margin: 0;
+}
+
+.aiGenStickyFooter {
+  border-top: 1px solid #2b435d;
+  padding-top: 10px;
+  display: grid;
+  gap: 6px;
+  position: sticky;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(24, 36, 54, 0.92), rgba(24, 36, 54, 1));
+}
+
+.aiGenFooterMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #95abc4;
+  font-size: 11px;
+}
+
+.aiGenerateBtn {
+  border: 0;
+  border-radius: 9px;
+  min-height: 42px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  background: linear-gradient(130deg, #cbef6d, #c8ff4a);
+  color: #20280e;
+}
+
+.aiGenerateBtn:disabled {
+  opacity: 0.5;
+}
+
 .inspectorFitRow {
   display: flex;
   flex-wrap: wrap;

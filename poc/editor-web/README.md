@@ -1,7 +1,17 @@
 # editor-web
 
 Current status (Product Sprint kickoff):
-- Real editor shell layout (Media Bin / Preview / Inspector / Timeline).
+- Real editor shell layout (Media Bin / Preview / Right Sidebar tabs / Timeline).
+- Right sidebar now contains:
+  - `AI Generation` panel (UI-first, engine-agnostic, capability-gated)
+  - `Inspector` panel
+- AI Generation includes:
+  - Prompt + `@mentions` autocomplete (seeded library + project assets)
+  - Engine/model selector with capability gating
+  - Output/motion/frames/references/advanced sections
+  - Local preset save/apply/delete (`mav.ai-generation.presets.v1`)
+  - Generate action that records queued request payload snapshots (no engine call yet)
+- Legacy silence-cut AI plugin controls moved under `AI Generation > Advanced > Legacy Tools`.
 - MP4 demux path via `mp4box` in a dedicated worker.
 - Worker decoding pipeline with deterministic seek QA and outlier reporting.
 - Fallback preview path:
@@ -17,6 +27,7 @@ Current status (Product Sprint kickoff):
   - open asset in preview
   - add asset to timeline
   - edit selected clip properties in Inspector
+- Project schema normalization now emits `mav.project.v2` with `aiGeneration` state.
 - Diagnostics hidden by default, available with `?dev=1`.
 
 ## Diagnostics / QA
