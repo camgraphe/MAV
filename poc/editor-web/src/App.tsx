@@ -442,6 +442,28 @@ function clampIntentDurationSec(kind: IntentBlockKind, durationSec: number): num
   return clamp(rounded, 1, 30);
 }
 
+function resolveSceneAspectRatioFromDimensions(width: number, height: number): "16:9" | "9:16" | "1:1" {
+  const safeWidth = Math.max(1, Number.isFinite(width) ? width : 1);
+  const safeHeight = Math.max(1, Number.isFinite(height) ? height : 1);
+  const ratio = safeWidth / safeHeight;
+  const candidates: Array<{ value: "16:9" | "9:16" | "1:1"; ratio: number }> = [
+    { value: "16:9", ratio: 16 / 9 },
+    { value: "9:16", ratio: 9 / 16 },
+    { value: "1:1", ratio: 1 },
+  ];
+  let selected = candidates[0];
+  let delta = Math.abs(ratio - selected.ratio);
+  for (let index = 1; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const nextDelta = Math.abs(ratio - candidate.ratio);
+    if (nextDelta < delta) {
+      selected = candidate;
+      delta = nextDelta;
+    }
+  }
+  return selected.value;
+}
+
 function sceneDurationSecFromClipMs(durationMs: number): number {
   return sceneBlockDurationSecFromMsCeil(durationMs);
 }
@@ -2052,6 +2074,10 @@ export default function App() {
       timelineThumbnailUrl: timelineThumbnail,
     };
   }, [activeAssetId, playheadMs, programAssetId, project.assets, sourcePlayheadMs]);
+  const timelineSceneDefaultAspect = useMemo(
+    () => resolveSceneAspectRatioFromDimensions(project.meta.width, project.meta.height),
+    [project.meta.width, project.meta.height],
+  );
 
   const clipExists = (trackId: string, clipId: string) =>
     project.timeline.tracks.some((track) => track.id === trackId && track.clips.some((clip) => clip.id === clipId));
@@ -2196,6 +2222,18 @@ export default function App() {
     return trimmed && trimmed.length > 0 ? trimmed : fallback;
   };
 
+  const createIntentContractForTimeline = (kind: IntentBlockKind, titleOverride?: string): IntentContract => {
+    const defaults = createDefaultIntentContract(kind);
+    return {
+      ...defaults,
+      output: {
+        ...defaults.output,
+        aspectRatio: kind === "scene" ? timelineSceneDefaultAspect : defaults.output.aspectRatio,
+      },
+      title: resolveIntentTitle(kind, titleOverride),
+    };
+  };
+
   const isAudioIntentKind = (kind: IntentBlockKind) => kind === "vo" || kind === "music" || kind === "sfx";
 
   const addIntentToTimeline = (
@@ -2209,10 +2247,7 @@ export default function App() {
       setLog("intentTimelineV1 disabled (set localStorage.mav.intentTimelineV1=1).");
       return;
     }
-    const contract = {
-      ...createDefaultIntentContract(kind),
-      title: resolveIntentTitle(kind, titleOverride),
-    };
+    const contract = createIntentContractForTimeline(kind, titleOverride);
     const isAudioIntent = isAudioIntentKind(kind);
     const shouldCreateLinkedAudio = kind === "scene";
     const requiredTrackKind: TrackKind = isAudioIntent ? "audio" : "video";
@@ -2328,10 +2363,7 @@ export default function App() {
       return;
     }
 
-    const contract = {
-      ...createDefaultIntentContract(kind),
-      title: resolveIntentTitle(kind, titleOverride),
-    };
+    const contract = createIntentContractForTimeline(kind, titleOverride);
     const startMs = Math.max(0, Math.round(startAtMs));
     const durationMs = resolveIntentDurationMs(kind, durationHintMs);
     const createdTrackId = nextTrackId(project.timeline.tracks, trackKind);
@@ -3933,9 +3965,26 @@ export default function App() {
       normalizedContract.blockKind === "scene" && selected.clip.linkGroupId && selected.clip.linkLocked !== false
         ? selected.clip.linkGroupId
         : null;
+    const selectedTrack = project.timeline.tracks.find((track) => track.id === selected.trackId) ?? null;
+    const selectedRole = selectedTrack ? effectiveClipRole(selectedTrack.kind, selected.clip) : selected.clip.mediaRole ?? "video";
+    const fallbackVideoSelection =
+      linkedGroupId != null
+        ? (() => {
+            for (const track of project.timeline.tracks) {
+              for (const clip of track.clips) {
+                if (!isIntentClip(clip)) continue;
+                if (clip.linkGroupId !== linkedGroupId || clip.linkLocked === false) continue;
+                if (effectiveClipRole(track.kind, clip) !== "video") continue;
+                return { trackId: track.id, clipId: clip.id };
+              }
+            }
+            return null;
+          })()
+        : null;
+    const shouldDisableAudio = normalizedContract.blockKind === "scene" && !normalizedContract.sceneComposer.fal.generateAudio;
 
     setProjectWithNormalize((prev) => {
-      const tracks = prev.timeline.tracks.map((track) => ({
+      let tracks = prev.timeline.tracks.map((track) => ({
         ...track,
         clips: track.clips.map((clip) => {
           const isSelected = clip.id === selectedId;
@@ -3966,6 +4015,64 @@ export default function App() {
           };
         }),
       }));
+
+      if (normalizedContract.blockKind === "scene" && linkedGroupId) {
+        const linkedEntries: Array<{ trackId: string; trackKind: TrackKind; clip: IntentClip }> = [];
+        for (const track of tracks) {
+          for (const clip of track.clips) {
+            if (!isIntentClip(clip)) continue;
+            if (clip.linkGroupId !== linkedGroupId || clip.linkLocked === false) continue;
+            linkedEntries.push({ trackId: track.id, trackKind: track.kind, clip });
+          }
+        }
+
+        if (!normalizedContract.sceneComposer.fal.generateAudio) {
+          const removeKeys = new Set(
+            linkedEntries
+              .filter((entry) => effectiveClipRole(entry.trackKind, entry.clip) === "audio")
+              .map((entry) => `${entry.trackId}:${entry.clip.id}`),
+          );
+          if (removeKeys.size > 0) {
+            tracks = tracks.map((track) => ({
+              ...track,
+              clips: track.clips.filter((clip) => !removeKeys.has(`${track.id}:${clip.id}`)),
+            }));
+          }
+        } else {
+          const hasAudio = linkedEntries.some((entry) => effectiveClipRole(entry.trackKind, entry.clip) === "audio");
+          if (!hasAudio) {
+            const videoTemplate = linkedEntries.find((entry) => effectiveClipRole(entry.trackKind, entry.clip) === "video");
+            if (videoTemplate) {
+              const resolvedAudioTrack = findOrCreateUnlockedTrack(tracks, "audio");
+              if (resolvedAudioTrack) {
+                tracks = resolvedAudioTrack.tracks;
+                const audioTrack = {
+                  ...tracks[resolvedAudioTrack.trackIndex],
+                  clips: [...tracks[resolvedAudioTrack.trackIndex].clips],
+                };
+                const audioClip: IntentClip = {
+                  id: `intent-${crypto.randomUUID().slice(0, 8)}`,
+                  type: "intent",
+                  label: normalizedContract.title,
+                  assetId: null,
+                  startMs: videoTemplate.clip.startMs,
+                  durationMs: videoTemplate.clip.durationMs,
+                  inMs: videoTemplate.clip.inMs,
+                  outMs: videoTemplate.clip.inMs + videoTemplate.clip.durationMs,
+                  mediaRole: "audio",
+                  linkGroupId: linkedGroupId,
+                  linkLocked: true,
+                  intent: normalizedContract,
+                  intentRender: createDefaultIntentRenderState(),
+                };
+                audioTrack.clips = sortClips([...audioTrack.clips, audioClip]);
+                tracks[resolvedAudioTrack.trackIndex] = audioTrack;
+              }
+            }
+          }
+        }
+      }
+
       return {
         ...prev,
         timeline: {
@@ -3974,6 +4081,16 @@ export default function App() {
         },
       };
     });
+
+    if (shouldDisableAudio && selectedRole === "audio") {
+      if (fallbackVideoSelection) {
+        setSelection(fallbackVideoSelection);
+        setSelectedClipKeys([clipKey(fallbackVideoSelection.trackId, fallbackVideoSelection.clipId)]);
+      } else {
+        setSelection(null);
+        setSelectedClipKeys([]);
+      }
+    }
   };
 
   const queueIntentGeneration = () => {
@@ -4134,6 +4251,140 @@ export default function App() {
       },
     }));
     setLog("First frame updated from previous continuity.");
+  };
+
+  const importSceneSlotImage = (target: "start-image" | "end-image" | "style-look" | "character" | "object") => {
+    const selectedId = project.aiGeneration.selectedClipId;
+    if (!selectedId) {
+      setLog("Select a scene block first.");
+      return;
+    }
+
+    const picker = document.createElement("input");
+    picker.type = "file";
+    picker.accept = "image/*";
+    picker.onchange = () => {
+      const file = picker.files?.[0];
+      if (!file) return;
+
+      const assetId = `asset-${crypto.randomUUID().slice(0, 8)}`;
+      const url = URL.createObjectURL(file);
+      const frame: IntentFrameRef = {
+        assetId,
+        assetLabel: file.name,
+        timeMs: 0,
+        thumbnailUrl: url,
+        source: "source-monitor",
+      };
+      const now = new Date().toISOString();
+      const bankEntry: IntentBankRef | null =
+        target === "character" || target === "object"
+          ? {
+              id: `${target === "character" ? "cha" : "obj"}-${crypto.randomUUID().slice(0, 8)}`,
+              label: file.name,
+              thumbnailUrl: url,
+              source: "source-monitor",
+              assetId,
+              timeMs: 0,
+              createdAt: now,
+            }
+          : null;
+
+      setProjectWithNormalize((prev) => {
+        const tracks = prev.timeline.tracks.map((track) => ({
+          ...track,
+          clips: track.clips.map((clip) => {
+            if (!isIntentClip(clip) || clip.id !== selectedId) return clip;
+            let nextIntent = clip.intent;
+            if (target === "start-image") {
+              nextIntent = { ...nextIntent, firstFrame: frame };
+            } else if (target === "end-image") {
+              nextIntent = { ...nextIntent, endFrame: frame };
+            } else if (target === "style-look") {
+              nextIntent = {
+                ...nextIntent,
+                sceneComposer: {
+                  ...nextIntent.sceneComposer,
+                  styleFrame: frame,
+                },
+              };
+            } else if (target === "character" && bankEntry) {
+              nextIntent = {
+                ...nextIntent,
+                characterRefs: [{ bankRefId: bankEntry.id, strength: "high", locked: false }],
+              };
+            } else if (target === "object" && bankEntry) {
+              nextIntent = {
+                ...nextIntent,
+                objectRefs: [{ bankRefId: bankEntry.id, strength: "high", locked: false }],
+              };
+            }
+
+            return {
+              ...clip,
+              intent: nextIntent,
+              intentRender: {
+                ...clip.intentRender,
+                hasDraftChanges: clip.intentRender.status === "ready" ? true : clip.intentRender.hasDraftChanges,
+              },
+            };
+          }),
+        }));
+
+        let nextReferenceBank = prev.aiGeneration.referenceBank;
+        if (target === "character" && bankEntry) {
+          nextReferenceBank = {
+            ...nextReferenceBank,
+            characters: [bankEntry, ...nextReferenceBank.characters].slice(0, 80),
+          };
+        } else if (target === "object" && bankEntry) {
+          nextReferenceBank = {
+            ...nextReferenceBank,
+            objects: [bankEntry, ...nextReferenceBank.objects].slice(0, 80),
+          };
+        }
+
+        return {
+          ...prev,
+          assets: [
+            ...prev.assets,
+            {
+              id: assetId,
+              kind: "image",
+              url,
+              name: file.name,
+              durationMs: 3000,
+              heroThumbnail: url,
+              thumbnails: [url],
+              hasAudio: false,
+            },
+          ],
+          timeline: {
+            ...prev.timeline,
+            tracks,
+          },
+          aiGeneration: {
+            ...prev.aiGeneration,
+            referenceBank: nextReferenceBank,
+          },
+        };
+      });
+
+      setActiveAssetId(assetId);
+      setPreviewMonitorMode("source");
+      if (target === "character") {
+        setLog("Imported image for Character slot.");
+      } else if (target === "object") {
+        setLog("Imported image for Object slot.");
+      } else if (target === "style-look") {
+        setLog("Imported image for Style slot.");
+      } else if (target === "end-image") {
+        setLog("Imported image for End slot.");
+      } else {
+        setLog("Imported image for Start slot.");
+      }
+    };
+    picker.click();
   };
 
   const addReferenceToBank = (target: "characters" | "objects", source: "source-monitor" | "timeline-program"): string | null => {
@@ -7047,6 +7298,7 @@ export default function App() {
                 }}
                 onSetFrame={setIntentFrame}
                 onContinueFromPrevious={continueFromPrevious}
+                onImportSlot={importSceneSlotImage}
                 onAttachRef={setClipReferenceStrength}
                 onAddBankRef={addReferenceToBank}
                 onRemoveBankRef={removeReferenceFromBank}

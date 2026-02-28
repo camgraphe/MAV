@@ -79,7 +79,7 @@ export function createDefaultIntentContract(kind: IntentBlockKind): IntentContra
       styleFrame: null,
       fal: {
         cfgScale: 0.5,
-        generateAudio: false,
+        generateAudio: true,
         voiceIds: [],
       },
       multiPrompt: {

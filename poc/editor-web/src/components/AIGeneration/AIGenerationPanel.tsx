@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AIGenerationSourceContext,
   IntentContract,
@@ -39,6 +39,7 @@ type AIGenerationPanelProps = {
   onRetryVersion: (versionId: string) => void;
   onSetFrame: (target: "first" | "end", source: "source-monitor" | "timeline-program") => void;
   onContinueFromPrevious: () => void;
+  onImportSlot: (target: "start-image" | "end-image" | "style-look" | "character" | "object") => void;
   onAttachRef: (
     target: "characterRefs" | "objectRefs",
     bankRefId: string,
@@ -91,43 +92,133 @@ function formatTimeLabel(ms: number): string {
   return `${minutes}:${seconds}`;
 }
 
+function estimateScenePrice(intent: IntentContract): number {
+  const shotDurationSec = intent.sceneComposer.multiPrompt.enabled
+    ? intent.sceneComposer.multiPrompt.shots.reduce(
+        (sum, shot) => sum + clampSceneBlockDurationSec(shot.durationSec),
+        0,
+      )
+    : clampSceneBlockDurationSec(intent.output.durationSec);
+  const durationSec = Math.max(clampSceneBlockDurationSec(intent.output.durationSec), shotDurationSec);
+  const modeMultiplier = intent.firstFrame ? 1.2 : 1;
+  const base = durationSec * 0.08 * modeMultiplier;
+  const audio = intent.sceneComposer.fal.generateAudio ? durationSec * 0.025 : 0;
+  const style = intent.sceneComposer.styleFrame ? 0.06 : 0;
+  return Math.round((base + audio + style) * 100) / 100;
+}
+
 const DURATION_OPTIONS = SCENE_BLOCK_DURATION_OPTIONS_SEC;
+const ASPECT_OPTIONS: Array<"16:9" | "9:16" | "1:1"> = ["16:9", "9:16", "1:1"];
+type SlotIconKind = "start" | "end" | "character" | "object" | "style";
 
 type CompactSlotProps = {
-  icon: string;
+  icon: SlotIconKind;
   label: string;
+  tooltip: string;
   valueLabel: string | null;
   thumbUrl: string | null;
-  onUseSource: () => void;
-  onUseTimeline: () => void;
-  onClear: () => void;
+  actions: Array<{
+    id: string;
+    label: string;
+    onSelect: () => void;
+    disabled?: boolean;
+  }>;
 };
 
-function CompactSlot({ icon, label, valueLabel, thumbUrl, onUseSource, onUseTimeline, onClear }: CompactSlotProps) {
-  const hasValue = Boolean(valueLabel);
+function SlotIcon({ kind }: { kind: SlotIconKind }) {
+  if (kind === "start") {
+    return (
+      <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <path d="M6 6h3v20H6z" fill="#5d88ff" />
+        <path d="M11 9l14 7-14 7z" fill="#8fd9ff" />
+      </svg>
+    );
+  }
+  if (kind === "end") {
+    return (
+      <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <path d="M7 6h3v20H7z" fill="#5d88ff" />
+        <path d="M10 8h14l-4 5 4 5H10z" fill="#8fd9ff" />
+      </svg>
+    );
+  }
+  if (kind === "character") {
+    return (
+      <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <circle cx="16" cy="11" r="5" fill="#8fd9ff" />
+        <path d="M7 27c0-5 4-9 9-9s9 4 9 9H7z" fill="#5d88ff" />
+      </svg>
+    );
+  }
+  if (kind === "object") {
+    return (
+      <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <path d="M16 5l10 6v10l-10 6-10-6V11z" fill="#5d88ff" />
+        <path d="M16 5l10 6-10 6-10-6z" fill="#8fd9ff" />
+      </svg>
+    );
+  }
   return (
-    <article className={`aiSceneSlot ${hasValue ? "isFilled" : "isEmpty"}`}>
-      <div className="aiSceneSlotHead">
-        <span className="aiSceneSlotIcon" aria-hidden>
-          {icon}
-        </span>
-        <strong>{label}</strong>
-      </div>
-      <div className="aiSceneSlotPreview">
-        {thumbUrl ? <img src={thumbUrl} alt={label} /> : <span>{hasValue ? "SET" : "+"}</span>}
-      </div>
-      <small className="aiSceneSlotValue">{valueLabel ?? "Empty"}</small>
-      <div className="aiSceneSlotActions">
-        <button type="button" className="iconBtn tiny" onClick={onUseSource}>
-          Source
-        </button>
-        <button type="button" className="iconBtn tiny" onClick={onUseTimeline}>
-          Timeline
-        </button>
-        <button type="button" className="iconBtn tiny" onClick={onClear} disabled={!hasValue}>
-          Clear
-        </button>
-      </div>
+    <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+      <path d="M16 4l2.8 5.6L25 12l-4.5 4.3 1.1 6.2L16 19.6l-5.6 2.9 1.1-6.2L7 12l6.2-2.4z" fill="#8fd9ff" />
+      <path d="M6 24l8-8 2 2-8 8H6z" fill="#5d88ff" />
+    </svg>
+  );
+}
+
+function CompactSlot({ icon, label, tooltip, valueLabel, thumbUrl, actions }: CompactSlotProps) {
+  const hasValue = Boolean(valueLabel);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const rootRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!rootRef.current?.contains(target)) {
+        setMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", closeOnOutside);
+    return () => window.removeEventListener("pointerdown", closeOnOutside);
+  }, [menuOpen]);
+
+  return (
+    <article ref={rootRef} className={`aiSceneSlot aiSceneSlotCompact ${hasValue ? "isFilled" : "isEmpty"}`}>
+      <button
+        type="button"
+        className="aiSceneSlotTrigger"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label={tooltip}
+        onClick={() => setMenuOpen((prev) => !prev)}
+        title={tooltip}
+      >
+        <div className="aiSceneSlotGlyph" aria-hidden>
+          {thumbUrl ? <img src={thumbUrl} alt={label} /> : <SlotIcon kind={icon} />}
+        </div>
+        <small className="aiSceneSlotLabel">{label}</small>
+        {valueLabel ? <small className="aiSceneSlotMeta">{valueLabel}</small> : null}
+      </button>
+      {menuOpen ? (
+        <div className="aiSceneSlotMenu" role="menu" aria-label={`${label} actions`}>
+          {actions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              role="menuitem"
+              disabled={action.disabled}
+              onClick={() => {
+                setMenuOpen(false);
+                action.onSelect();
+              }}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -139,6 +230,7 @@ type SceneBlockComposerProps = {
   onContractChange: (next: IntentContract) => void;
   onSetFrame: (target: "first" | "end", source: "source-monitor" | "timeline-program") => void;
   onContinueFromPrevious: () => void;
+  onImportSlot: (target: "start-image" | "end-image" | "style-look" | "character" | "object") => void;
   onAddBankRef: (target: "characters" | "objects", source: "source-monitor" | "timeline-program") => string | null;
 };
 
@@ -149,6 +241,7 @@ function SceneBlockComposer({
   onContractChange,
   onSetFrame,
   onContinueFromPrevious,
+  onImportSlot,
   onAddBankRef,
 }: SceneBlockComposerProps) {
   const intent = selectedClip.intent;
@@ -165,6 +258,8 @@ function SceneBlockComposer({
   const promptIsEmpty = intent.prompt.trim().length === 0;
   const multiPromptEnabled = intent.sceneComposer.multiPrompt.enabled;
   const hasMultiPromptContent = intent.sceneComposer.multiPrompt.shots.some((entry) => entry.prompt.trim().length > 0);
+  const selectedAspect: "16:9" | "9:16" | "1:1" =
+    intent.output.aspectRatio === "9:16" || intent.output.aspectRatio === "1:1" ? intent.output.aspectRatio : "16:9";
 
   const setDuration = (value: number) => {
     onContractChange({
@@ -334,24 +429,48 @@ function SceneBlockComposer({
           ) : null}
         </div>
         <div className="aiSceneModeRow">
-          <button
-            type="button"
-            className={`iconBtn tiny ${!multiPromptEnabled ? "activeTool" : ""}`}
-            onClick={() => setMultiPromptEnabled(false)}
-          >
-            Single Prompt
-          </button>
-          <button
-            type="button"
-            className={`iconBtn tiny ${multiPromptEnabled ? "activeTool" : ""}`}
-            onClick={() => setMultiPromptEnabled(true)}
-          >
-            Multi-prompt
-          </button>
+          <div className="aiSceneModeButtons">
+            <button
+              type="button"
+              className={`iconBtn tiny ${!multiPromptEnabled ? "activeTool" : ""}`}
+              onClick={() => setMultiPromptEnabled(false)}
+            >
+              Single Prompt
+            </button>
+            <button
+              type="button"
+              className={`iconBtn tiny ${multiPromptEnabled ? "activeTool" : ""}`}
+              onClick={() => setMultiPromptEnabled(true)}
+            >
+              Multi-prompt
+            </button>
+          </div>
+          <div className="aiSceneModeAudioControl" title="Affects generation cost">
+            <span className="aiSceneModeAudioLabel">Audio</span>
+            <button
+              type="button"
+              className={`aiSceneModeAudioSwitch ${intent.sceneComposer.fal.generateAudio ? "isOn" : "isOff"}`}
+              aria-pressed={intent.sceneComposer.fal.generateAudio}
+              aria-label={`Audio ${intent.sceneComposer.fal.generateAudio ? "on" : "off"}`}
+              onClick={() =>
+                onContractChange({
+                  ...intent,
+                  sceneComposer: {
+                    ...intent.sceneComposer,
+                    fal: {
+                      ...intent.sceneComposer.fal,
+                      generateAudio: !intent.sceneComposer.fal.generateAudio,
+                    },
+                  },
+                })
+              }
+            >
+              <span className="aiSceneModeAudioKnob" />
+            </button>
+          </div>
         </div>
         {!multiPromptEnabled ? (
           <label className="aiScenePrompt">
-            <span>Prompt</span>
             <textarea
               rows={3}
               value={intent.prompt}
@@ -409,8 +528,8 @@ function SceneBlockComposer({
             </button>
           </div>
         )}
-        <div className="aiSceneChipRows">
-          <div className="aiSceneChipRow">
+        <div className="aiSceneOutputRow">
+          <label className="aiSceneOutputField">
             <span>Duration</span>
             <select
               className="aiSceneDurationSelect"
@@ -423,119 +542,207 @@ function SceneBlockComposer({
                 </option>
               ))}
             </select>
-          </div>
-          <div className="aiSceneChipRow">
+          </label>
+          <label className="aiSceneOutputField">
             <span>Aspect</span>
-            <div className="aiSceneChips">
-              <button
-                type="button"
-                className={`iconBtn tiny ${intent.output.aspectRatio === "16:9" ? "activeTool" : ""}`}
-                onClick={() => setAspect("16:9")}
-              >
-                16:9
-              </button>
-              <button
-                type="button"
-                className={`iconBtn tiny ${intent.output.aspectRatio === "9:16" ? "activeTool" : ""}`}
-                onClick={() => setAspect("9:16")}
-              >
-                9:16
-              </button>
-              <button
-                type="button"
-                className={`iconBtn tiny ${intent.output.aspectRatio === "1:1" ? "activeTool" : ""}`}
-                onClick={() => setAspect("1:1")}
-              >
-                1:1
-              </button>
-            </div>
-          </div>
+            <select
+              className="aiSceneDurationSelect"
+              value={selectedAspect}
+              onChange={(event) => setAspect(event.target.value as "16:9" | "9:16" | "1:1")}
+            >
+              {ASPECT_OPTIONS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </article>
 
       <article className="aiSceneCard">
         <div className="aiSceneStartGrid">
           <CompactSlot
-            icon="S"
-            label="Start Image"
+            icon="start"
+            label="Start"
+            tooltip="Start frame: click to choose previous clip, timeline, source, or import image."
             valueLabel={intent.firstFrame ? `${intent.firstFrame.assetLabel} @ ${formatTimeLabel(intent.firstFrame.timeMs)}` : null}
             thumbUrl={intent.firstFrame?.thumbnailUrl ?? null}
-            onUseSource={() => onSetFrame("first", "source-monitor")}
-            onUseTimeline={() => onSetFrame("first", "timeline-program")}
-            onClear={() =>
-              onContractChange({
-                ...intent,
-                firstFrame: null,
-              })
-            }
+            actions={[
+              {
+                id: "prev",
+                label: "Previous clip (last frame)",
+                onSelect: onContinueFromPrevious,
+              },
+              {
+                id: "timeline",
+                label: "Pick timeline",
+                onSelect: () => onSetFrame("first", "timeline-program"),
+              },
+              {
+                id: "source",
+                label: "Pick source",
+                onSelect: () => onSetFrame("first", "source-monitor"),
+              },
+              {
+                id: "import",
+                label: "Import image",
+                onSelect: () => onImportSlot("start-image"),
+              },
+              {
+                id: "clear",
+                label: "Clear",
+                disabled: !intent.firstFrame,
+                onSelect: () =>
+                  onContractChange({
+                    ...intent,
+                    firstFrame: null,
+                  }),
+              },
+            ]}
           />
           <CompactSlot
-            icon="E"
-            label="End Image"
+            icon="end"
+            label="End"
+            tooltip="End frame (optional): click to choose timeline, source, or import image."
             valueLabel={intent.endFrame ? `${intent.endFrame.assetLabel} @ ${formatTimeLabel(intent.endFrame.timeMs)}` : null}
             thumbUrl={intent.endFrame?.thumbnailUrl ?? null}
-            onUseSource={() => onSetFrame("end", "source-monitor")}
-            onUseTimeline={() => onSetFrame("end", "timeline-program")}
-            onClear={() =>
-              onContractChange({
-                ...intent,
-                endFrame: null,
-              })
-            }
+            actions={[
+              {
+                id: "timeline",
+                label: "Pick timeline",
+                onSelect: () => onSetFrame("end", "timeline-program"),
+              },
+              {
+                id: "source",
+                label: "Pick source",
+                onSelect: () => onSetFrame("end", "source-monitor"),
+              },
+              {
+                id: "import",
+                label: "Import image",
+                onSelect: () => onImportSlot("end-image"),
+              },
+              {
+                id: "clear",
+                label: "Clear",
+                disabled: !intent.endFrame,
+                onSelect: () =>
+                  onContractChange({
+                    ...intent,
+                    endFrame: null,
+                  }),
+              },
+            ]}
           />
-        </div>
-        <div className="aiSceneInlineActions">
-          <button type="button" className="iconBtn tiny" onClick={onContinueFromPrevious}>
-            Continue prev
-          </button>
         </div>
       </article>
 
       <div className="aiSceneSlotGrid">
         <CompactSlot
-          icon="C"
+          icon="character"
           label="Character"
+          tooltip="Character reference: click to pick timeline/source frame or import image."
           valueLabel={primaryCharacter?.label ?? null}
           thumbUrl={primaryCharacter?.thumbnailUrl ?? null}
-          onUseSource={() => setPrimarySlotRef("characterRefs", "source-monitor")}
-          onUseTimeline={() => setPrimarySlotRef("characterRefs", "timeline-program")}
-          onClear={() =>
-            onContractChange({
-              ...intent,
-              characterRefs: [],
-            })
-          }
+          actions={[
+            {
+              id: "timeline",
+              label: "Pick timeline",
+              onSelect: () => setPrimarySlotRef("characterRefs", "timeline-program"),
+            },
+            {
+              id: "source",
+              label: "Pick source",
+              onSelect: () => setPrimarySlotRef("characterRefs", "source-monitor"),
+            },
+            {
+              id: "import",
+              label: "Import image",
+              onSelect: () => onImportSlot("character"),
+            },
+            {
+              id: "clear",
+              label: "Clear",
+              disabled: intent.characterRefs.length === 0,
+              onSelect: () =>
+                onContractChange({
+                  ...intent,
+                  characterRefs: [],
+                }),
+            },
+          ]}
         />
         <CompactSlot
-          icon="O"
+          icon="object"
           label="Object"
+          tooltip="Object reference: click to pick timeline/source frame or import image."
           valueLabel={primaryObject?.label ?? null}
           thumbUrl={primaryObject?.thumbnailUrl ?? null}
-          onUseSource={() => setPrimarySlotRef("objectRefs", "source-monitor")}
-          onUseTimeline={() => setPrimarySlotRef("objectRefs", "timeline-program")}
-          onClear={() =>
-            onContractChange({
-              ...intent,
-              objectRefs: [],
-            })
-          }
+          actions={[
+            {
+              id: "timeline",
+              label: "Pick timeline",
+              onSelect: () => setPrimarySlotRef("objectRefs", "timeline-program"),
+            },
+            {
+              id: "source",
+              label: "Pick source",
+              onSelect: () => setPrimarySlotRef("objectRefs", "source-monitor"),
+            },
+            {
+              id: "import",
+              label: "Import image",
+              onSelect: () => onImportSlot("object"),
+            },
+            {
+              id: "clear",
+              label: "Clear",
+              disabled: intent.objectRefs.length === 0,
+              onSelect: () =>
+                onContractChange({
+                  ...intent,
+                  objectRefs: [],
+                }),
+            },
+          ]}
         />
         <CompactSlot
-          icon="S"
-          label="Style/Look"
+          icon="style"
+          label="Style"
+          tooltip="Style/look reference: click to pick timeline/source frame or import image."
           valueLabel={intent.sceneComposer.styleFrame?.assetLabel ?? null}
           thumbUrl={intent.sceneComposer.styleFrame?.thumbnailUrl ?? null}
-          onUseSource={() => setStyleFromSource("source-monitor")}
-          onUseTimeline={() => setStyleFromSource("timeline-program")}
-          onClear={() =>
-            onContractChange({
-              ...intent,
-              sceneComposer: {
-                ...intent.sceneComposer,
-                styleFrame: null,
-              },
-            })
-          }
+          actions={[
+            {
+              id: "timeline",
+              label: "Pick timeline",
+              onSelect: () => setStyleFromSource("timeline-program"),
+            },
+            {
+              id: "source",
+              label: "Pick source",
+              onSelect: () => setStyleFromSource("source-monitor"),
+            },
+            {
+              id: "import",
+              label: "Import image",
+              onSelect: () => onImportSlot("style-look"),
+            },
+            {
+              id: "clear",
+              label: "Clear",
+              disabled: !intent.sceneComposer.styleFrame,
+              onSelect: () =>
+                onContractChange({
+                  ...intent,
+                  sceneComposer: {
+                    ...intent.sceneComposer,
+                    styleFrame: null,
+                  },
+                }),
+            },
+          ]}
         />
       </div>
 
@@ -581,26 +788,6 @@ function SceneBlockComposer({
                   })
                 }
               />
-            </label>
-
-            <label className="aiSceneToggleRow">
-              <input
-                type="checkbox"
-                checked={intent.sceneComposer.fal.generateAudio}
-                onChange={(event) =>
-                  onContractChange({
-                    ...intent,
-                    sceneComposer: {
-                      ...intent.sceneComposer,
-                      fal: {
-                        ...intent.sceneComposer.fal,
-                        generateAudio: event.target.checked,
-                      },
-                    },
-                  })
-                }
-              />
-              <span>Generate audio</span>
             </label>
 
             <div className="aiSceneVoiceGrid">
@@ -649,6 +836,7 @@ export function AIGenerationPanel({
   onRetryVersion,
   onSetFrame,
   onContinueFromPrevious,
+  onImportSlot,
   onAttachRef: _onAttachRef,
   onAddBankRef,
   onRemoveBankRef: _onRemoveBankRef,
@@ -657,6 +845,23 @@ export function AIGenerationPanel({
     if (!selectedClip) return null;
     return selectedClip.intentRender.versions.find((entry) => entry.id === selectedClip.intentRender.activeVersionId) ?? null;
   }, [selectedClip]);
+  const sceneIntent = selectedClip?.intent.blockKind === "scene" ? selectedClip.intent : null;
+  const scenePromptReady = sceneIntent
+    ? sceneIntent.sceneComposer.multiPrompt.enabled
+      ? sceneIntent.sceneComposer.multiPrompt.shots.some((entry) => entry.prompt.trim().length > 0)
+      : sceneIntent.prompt.trim().length > 0
+    : true;
+  const canGenerate = Boolean(selectedClip) && scenePromptReady;
+  const generateLabel = sceneIntent
+    ? `Generate · ~$${estimateScenePrice(sceneIntent).toFixed(2)}`
+    : "Generate new version";
+  const helperText = !selectedClip
+    ? "Select a block to generate."
+    : !scenePromptReady
+      ? "Add prompt text before generating."
+      : sceneIntent
+        ? "Estimated cost updates with duration, mode, and audio."
+        : null;
 
   return (
     <div className="aiGenerationPanel aiGenerationPanelComposer">
@@ -670,6 +875,7 @@ export function AIGenerationPanel({
             onContractChange={onContractChange}
             onSetFrame={onSetFrame}
             onContinueFromPrevious={onContinueFromPrevious}
+            onImportSlot={onImportSlot}
             onAddBankRef={onAddBankRef}
           />
         ) : null}
@@ -686,25 +892,22 @@ export function AIGenerationPanel({
       </div>
 
       <footer className="aiGenStickyFooter">
-        {selectedClip ? (
-          <>
-            <div className="aiGenFooterMeta">
-              <span>{selectedClip.intentRender.versions.length} version(s)</span>
-              <span>{selectedClip.intentRender.progressPct}%</span>
-            </div>
-            <button type="button" className="aiGenerateBtn" onClick={onGenerate}>
-              Generate new version
-            </button>
-            {selectedClip.intentRender.status === "failed" && latestVersion ? (
-              <button type="button" className="iconBtn" onClick={() => onRetryVersion(latestVersion.id)}>
-                Retry failed version
-              </button>
-            ) : null}
-            {selectedClip.intentRender.error ? <p className="hint">{selectedClip.intentRender.error}</p> : null}
-          </>
-        ) : (
-          <p className="hint">Composer options vary by selected item type.</p>
-        )}
+        <div className="aiGenFooterMeta">
+          <span>{selectedClip ? `${selectedClip.intentRender.versions.length} version(s)` : "No block selected"}</span>
+          <span>{selectedClip ? `${selectedClip.intentRender.progressPct}%` : "0%"}</span>
+        </div>
+        <button type="button" className="aiGenerateBtn" onClick={onGenerate} disabled={!canGenerate}>
+          {generateLabel}
+        </button>
+        {selectedClip?.intentRender.status === "failed" && latestVersion ? (
+          <button type="button" className="iconBtn" onClick={() => onRetryVersion(latestVersion.id)}>
+            Retry failed version
+          </button>
+        ) : null}
+        {helperText ? <p className="hint">{helperText}</p> : null}
+        {selectedClip?.intentRender.error ? (
+          <p className="hint">{selectedClip.intentRender.error}</p>
+        ) : null}
       </footer>
     </div>
   );

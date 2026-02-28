@@ -1895,10 +1895,11 @@ select {
 
 .aiGenerationPanel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 10px;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .aiGenHeader {
@@ -2154,9 +2155,12 @@ select {
   padding-top: 10px;
   display: grid;
   gap: 6px;
+  margin-top: auto;
   position: sticky;
   bottom: 0;
+  z-index: 20;
   background: linear-gradient(180deg, rgba(24, 36, 54, 0.92), rgba(24, 36, 54, 1));
+  box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.22);
 }
 
 .aiComposerEmpty {
@@ -2224,7 +2228,7 @@ select {
 }
 
 .aiScenePrompt > span,
-.aiSceneChipRow > span,
+.aiSceneOutputField > span,
 .aiSceneAdvancedBody label > span {
   font-size: 11px;
   color: #9eb5d0;
@@ -2259,29 +2263,76 @@ select {
 
 .aiSceneModeRow {
   display: flex;
-  gap: 6px;
-}
-
-.aiSceneChipRows {
-  display: grid;
-  gap: 6px;
-}
-
-.aiSceneChipRow {
-  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.aiSceneChips {
+.aiSceneModeButtons {
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
 }
 
+.aiSceneOutputRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.aiSceneOutputField {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.aiSceneModeAudioControl {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aiSceneModeAudioLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #d8eaff;
+}
+
+.aiSceneModeAudioSwitch {
+  border: 1px solid #45607e;
+  border-radius: 999px;
+  background: #11253a;
+  width: 42px;
+  height: 24px;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.aiSceneModeAudioSwitch.isOn {
+  background: #1f4b75;
+  border-color: #63b8ff;
+}
+
+.aiSceneModeAudioKnob {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #e7f3ff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
+  transform: translateX(0);
+  transition: transform 120ms ease;
+}
+
+.aiSceneModeAudioSwitch.isOn .aiSceneModeAudioKnob {
+  transform: translateX(18px);
+}
+
 .aiSceneDurationSelect {
-  max-width: 92px;
+  width: 100%;
   min-height: 26px;
   font-size: 12px;
 }
@@ -2333,74 +2384,101 @@ select {
 }
 
 .aiSceneSlot {
-  border: 1px solid #34506f;
-  border-radius: 8px;
-  background: #122033;
-  padding: 7px;
-  display: grid;
-  gap: 6px;
+  border: 0;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #131f2f, #111b29);
+  position: relative;
+  padding: 8px;
 }
 
 .aiSceneSlot.isFilled {
-  border-color: #4f8ac1;
+  background: linear-gradient(180deg, #16263a, #112033);
 }
 
-.aiSceneSlotHead {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.aiSceneSlotHead strong {
-  font-size: 11px;
-  line-height: 1.2;
-}
-
-.aiSceneSlotIcon {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  border: 1px solid #3e6488;
-  background: #1a2f47;
-  display: grid;
-  place-items: center;
-  font-size: 9px;
-  color: #cfe5ff;
-}
-
-.aiSceneSlotPreview {
+.aiSceneSlotCompact .aiSceneSlotTrigger {
   width: 100%;
-  aspect-ratio: 1 / 1;
-  border-radius: 6px;
-  border: 1px dashed #486b8f;
-  background: rgba(20, 38, 57, 0.6);
+  border: 0;
+  background: transparent;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  align-content: center;
+  padding: 4px 4px 6px;
+  min-height: 110px;
+}
+
+.aiSceneSlotGlyph {
+  width: 44px;
+  height: 34px;
   display: grid;
   place-items: center;
   overflow: hidden;
 }
 
-.aiSceneSlotPreview img {
+.aiSceneSlotGlyph img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: 7px;
 }
 
-.aiSceneSlotPreview span {
-  color: #b8d2ed;
-  font-size: 11px;
-  font-weight: 700;
+.aiSceneSlotGlyph svg {
+  width: 30px;
+  height: 30px;
+  display: block;
 }
 
-.aiSceneSlotValue {
-  color: #9bb4cf;
+.aiSceneSlotLabel {
+  color: #d3e5fb;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.aiSceneSlotMeta {
+  color: #8fa9c4;
   font-size: 10px;
   line-height: 1.2;
-  min-height: 24px;
-  display: -webkit-box;
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
   overflow: hidden;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+}
+
+.aiSceneSlotMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 172px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border-radius: 8px;
+  border: 1px solid #45688b;
+  background: #102033;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+  z-index: 50;
+}
+
+.aiSceneSlotMenu button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #d6e9ff;
+  text-align: left;
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+.aiSceneSlotMenu button:hover {
+  background: #1a3550;
+}
+
+.aiSceneSlotMenu button:disabled {
+  color: #7892ad;
+  background: transparent;
 }
 
 .aiSceneMultiPromptList {
@@ -2616,6 +2694,7 @@ select {
   border: 0;
   border-radius: 9px;
   min-height: 42px;
+  width: 100%;
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.03em;
@@ -2624,7 +2703,9 @@ select {
 }
 
 .aiGenerateBtn:disabled {
-  opacity: 0.5;
+  opacity: 1;
+  color: #6f7d4e;
+  background: linear-gradient(130deg, #8fa069, #95ad61);
 }
 
 .inspectorFitRow {
