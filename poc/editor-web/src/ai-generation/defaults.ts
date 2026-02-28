@@ -6,6 +6,7 @@ import type {
   IntentReferenceBank,
   IntentRenderState,
 } from "./types";
+import { clampSceneBlockDurationSec } from "./scene-engine-limits";
 
 export const INTENT_RENDER_HISTORY_LIMIT = 24;
 export const AI_GENERATION_HISTORY_LIMIT = 100;
@@ -16,6 +17,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function clampIntentDurationSec(kind: IntentBlockKind, durationSec: number): number {
+  const rounded = Math.round(durationSec);
+  if (kind === "scene") return clampSceneBlockDurationSec(rounded);
+  return clamp(rounded, 1, 30);
+}
+
 export function createDefaultReferenceBank(): IntentReferenceBank {
   return {
     characters: [],
@@ -24,10 +31,10 @@ export function createDefaultReferenceBank(): IntentReferenceBank {
 }
 
 function titleFromKind(kind: IntentBlockKind): string {
-  if (kind === "hook") return "Hook";
-  if (kind === "scene") return "Video Intent";
-  if (kind === "outro") return "Outro";
-  if (kind === "vo") return "Audio Intent";
+  if (kind === "hook") return "Hook Block";
+  if (kind === "scene") return "Scene Block";
+  if (kind === "outro") return "Outro Block";
+  if (kind === "vo") return "Audio Block";
   if (kind === "music") return "Music";
   return "SFX";
 }
@@ -67,6 +74,19 @@ export function createDefaultIntentContract(kind: IntentBlockKind): IntentContra
       mood: kind === "music" ? "uplifting" : "neutral",
       tempo: 100,
       intensity: 50,
+    },
+    sceneComposer: {
+      styleFrame: null,
+      fal: {
+        cfgScale: 0.5,
+        generateAudio: false,
+        voiceIds: [],
+      },
+      multiPrompt: {
+        enabled: false,
+        shots: [],
+        shotType: "customize",
+      },
     },
   };
 }
@@ -124,8 +144,8 @@ export function normalizeAIGenerationState(input: AIGenerationState | undefined)
 }
 
 export const INTENT_CREATE_TEMPLATES: IntentCreateTemplate[] = [
-  { kind: "scene", label: "Video Intent" },
-  { kind: "vo", label: "Audio Intent" },
+  { kind: "scene", label: "Scene Block" },
+  { kind: "vo", label: "Audio Block" },
 ];
 
 // Compatibility helpers used by legacy modules/imports.
@@ -146,7 +166,7 @@ export function normalizeAIGenConfig(input: Partial<IntentContract> | undefined)
     output: {
       ...defaults.output,
       ...(input?.output ?? {}),
-      durationSec: clamp(Math.round(input?.output?.durationSec ?? defaults.output.durationSec), 1, 30),
+      durationSec: clampIntentDurationSec(kind, input?.output?.durationSec ?? defaults.output.durationSec),
     },
     motion: {
       ...defaults.motion,
@@ -158,6 +178,35 @@ export function normalizeAIGenConfig(input: Partial<IntentContract> | undefined)
       ...(input?.audio ?? {}),
       tempo: clamp(Math.round(input?.audio?.tempo ?? defaults.audio.tempo), 40, 220),
       intensity: clamp(Math.round(input?.audio?.intensity ?? defaults.audio.intensity), 0, 100),
+    },
+    sceneComposer: {
+      styleFrame: input?.sceneComposer?.styleFrame ?? defaults.sceneComposer.styleFrame,
+      fal: {
+        cfgScale: clamp(input?.sceneComposer?.fal?.cfgScale ?? defaults.sceneComposer.fal.cfgScale, 0, 1),
+        generateAudio:
+          typeof input?.sceneComposer?.fal?.generateAudio === "boolean"
+            ? input.sceneComposer.fal.generateAudio
+            : defaults.sceneComposer.fal.generateAudio,
+        voiceIds: Array.isArray(input?.sceneComposer?.fal?.voiceIds)
+          ? input.sceneComposer.fal.voiceIds.slice(0, 2).filter((entry) => typeof entry === "string")
+          : defaults.sceneComposer.fal.voiceIds,
+      },
+      multiPrompt: {
+        enabled:
+          typeof input?.sceneComposer?.multiPrompt?.enabled === "boolean"
+            ? input.sceneComposer.multiPrompt.enabled
+            : defaults.sceneComposer.multiPrompt.enabled,
+        shots: Array.isArray(input?.sceneComposer?.multiPrompt?.shots)
+          ? input.sceneComposer.multiPrompt.shots
+              .map((entry) => ({
+                prompt: typeof entry?.prompt === "string" ? entry.prompt : "",
+                durationSec: clampSceneBlockDurationSec(entry?.durationSec ?? defaults.output.durationSec),
+              }))
+              .slice(0, 8)
+          : defaults.sceneComposer.multiPrompt.shots,
+        shotType:
+          input?.sceneComposer?.multiPrompt?.shotType === "intelligent" ? "intelligent" : defaults.sceneComposer.multiPrompt.shotType,
+      },
     },
     matchLensAndLighting:
       typeof input?.matchLensAndLighting === "boolean" ? input.matchLensAndLighting : defaults.matchLensAndLighting,

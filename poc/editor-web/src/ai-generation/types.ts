@@ -52,6 +52,31 @@ export type IntentAudioIntent = {
   intensity: number;
 };
 
+export type IntentSceneFalConfig = {
+  cfgScale: number;
+  generateAudio: boolean;
+  voiceIds: string[];
+};
+
+export type IntentSceneMultiPromptShot = {
+  prompt: string;
+  durationSec: number;
+};
+
+export type IntentSceneShotType = "customize" | "intelligent";
+
+export type IntentSceneMultiPromptConfig = {
+  enabled: boolean;
+  shots: IntentSceneMultiPromptShot[];
+  shotType: IntentSceneShotType;
+};
+
+export type IntentSceneComposerConfig = {
+  styleFrame: IntentFrameRef | null;
+  fal: IntentSceneFalConfig;
+  multiPrompt: IntentSceneMultiPromptConfig;
+};
+
 export type IntentOutputConfig = {
   aspectRatio: "1:1" | "4:5" | "9:16" | "16:9" | "21:9";
   durationSec: number;
@@ -77,6 +102,7 @@ export type IntentContract = {
   anglePreset: IntentAnglePreset | null;
   matchLensAndLighting: boolean;
   audio: IntentAudioIntent;
+  sceneComposer: IntentSceneComposerConfig;
 };
 
 export type IntentRenderVersion = {

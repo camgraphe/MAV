@@ -130,6 +130,7 @@ type TimelinePanelProps = {
     trackId: string,
     startMs: number,
     durationHintMs?: number,
+    title?: string,
   ) => void;
   onSourceRangeDrop: (payload: SourceRangeDropPayload, trackId: string, startMs: number) => void;
   onAssetDropToNewTrack: (assetId: string, trackKind: "video" | "audio", startMs: number, durationHintMs?: number) => void;
@@ -138,6 +139,7 @@ type TimelinePanelProps = {
     trackKind: "video" | "audio",
     startMs: number,
     durationHintMs?: number,
+    title?: string,
   ) => void;
   onSelectClipKeys: (keys: string[], primary?: { trackId: string; clipId: string } | null) => void;
   onClearSelection: () => void;
@@ -512,11 +514,14 @@ export function TimelinePanel({
     if (intentTemplate) {
       const intentNeedsAudio =
         intentTemplate.kind === "vo" || intentTemplate.kind === "music" || intentTemplate.kind === "sfx";
+      const sceneWithLinkedAudio = intentTemplate.kind === "scene";
       const expectedTrackKind: "video" | "audio" = intentNeedsAudio ? "audio" : "video";
       if (!lane && outOfBounds) {
         return {
           compatible: true,
-          message: `Drop to create a new ${expectedTrackKind} track`,
+          message: sceneWithLinkedAudio
+            ? "Drop to create a new video track (audio linked)."
+            : `Drop to create a new ${expectedTrackKind} track`,
           createTrackKind: expectedTrackKind,
         };
       }
@@ -526,13 +531,20 @@ export function TimelinePanel({
       if (lane.kind !== expectedTrackKind) {
         return {
           compatible: false,
-          message: expectedTrackKind === "video" ? "Intent video only on video tracks." : "Intent audio only on audio tracks.",
+          message:
+            expectedTrackKind === "video"
+              ? sceneWithLinkedAudio
+                ? "Scene blocks must be dropped on video tracks (audio is linked automatically)."
+                : "Intent video only on video tracks."
+              : "Intent audio only on audio tracks.",
           createTrackKind: undefined,
         };
       }
       return {
         compatible: true,
-        message: `Drop on ${trackDisplayName(lane, visibleTracks)}`,
+        message: sceneWithLinkedAudio
+          ? `Drop on ${trackDisplayName(lane, visibleTracks)} (audio linked)`
+          : `Drop on ${trackDisplayName(lane, visibleTracks)}`,
         createTrackKind: undefined,
       };
     }
@@ -926,7 +938,7 @@ export function TimelinePanel({
                   sourceRange != null
                     ? sourceRange.hasAudio
                     : intentTemplate != null
-                      ? false
+                      ? intentTemplate.kind === "scene"
                       : (asset?.kind ?? dragAsset?.kind) === "video" &&
                       (typeof asset?.hasAudio === "boolean" ? asset.hasAudio : dragAsset?.hasAudio) !== false;
                 setDragLane({
@@ -1010,11 +1022,17 @@ export function TimelinePanel({
                   return undefined;
                 })();
                 if (lane) {
-                  onIntentDrop(intentTemplate.kind, lane.id, startMs, durationHintMs);
+                  onIntentDrop(intentTemplate.kind, lane.id, startMs, durationHintMs, intentTemplate.label);
                   return;
                 }
                 if (createTrackKind) {
-                  onIntentDropToNewTrack(intentTemplate.kind, createTrackKind, startMs, durationHintMs);
+                  onIntentDropToNewTrack(
+                    intentTemplate.kind,
+                    createTrackKind,
+                    startMs,
+                    durationHintMs,
+                    intentTemplate.label,
+                  );
                   return;
                 }
               }

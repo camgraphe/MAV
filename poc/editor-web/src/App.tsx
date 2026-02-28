@@ -15,7 +15,7 @@ import { InspectorPanel } from "./components/Inspector/InspectorPanel";
 import { RightSidebarPanel } from "./components/Inspector/RightSidebarPanel";
 import { MediaBinPanel } from "./components/MediaBin/MediaBinPanel";
 import { LibraryPanel } from "./components/MediaBin/LibraryPanel";
-import { AIGenerationPanel } from "./components/AIGeneration/AIGenerationPanel";
+import { AIGenerationPanel, type AIGenerationPanelSelection } from "./components/AIGeneration/AIGenerationPanel";
 import { DiagnosticsPanel } from "./components/Diagnostics/DiagnosticsPanel";
 import { ExportModal } from "./components/Export/ExportModal";
 import { analyzeMediaFile, captureQuickVideoThumbnail } from "./preview/media-analysis";
@@ -45,6 +45,12 @@ import {
   type SilenceCutPluginInput,
   type SilenceCutPluginOutput,
 } from "./ai/silenceCutPlugin";
+import { buildSceneFalRequest } from "./ai-generation/fal-scene-builder";
+import {
+  SCENE_BLOCK_DURATION_MAX_SEC,
+  clampSceneBlockDurationSec,
+  sceneBlockDurationSecFromMsCeil,
+} from "./ai-generation/scene-engine-limits";
 
 type TrackKind = "video" | "overlay" | "audio";
 
@@ -428,6 +434,16 @@ function fromUs(us: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function clampIntentDurationSec(kind: IntentBlockKind, durationSec: number): number {
+  const rounded = Math.round(durationSec);
+  if (kind === "scene") return clampSceneBlockDurationSec(rounded);
+  return clamp(rounded, 1, 30);
+}
+
+function sceneDurationSecFromClipMs(durationMs: number): number {
+  return sceneBlockDurationSecFromMsCeil(durationMs);
 }
 
 function clampSourcePoint(value: number | null, durationMs: number): number | null {
@@ -871,10 +887,12 @@ function createInitialProject(): ProjectState {
 function normalizeIntentContract(input: Partial<IntentContract> | undefined, fallbackKind: IntentBlockKind): IntentContract {
   const defaults = createDefaultIntentContract(fallbackKind);
   if (!input) return defaults;
+  const sceneComposer = input.sceneComposer;
+  const blockKind = input.blockKind ?? fallbackKind;
   return {
     ...defaults,
     ...input,
-    blockKind: input.blockKind ?? fallbackKind,
+    blockKind,
     title: input.title?.trim() ? input.title : defaults.title,
     prompt: input.prompt ?? defaults.prompt,
     negativePrompt: input.negativePrompt ?? defaults.negativePrompt,
@@ -885,6 +903,7 @@ function normalizeIntentContract(input: Partial<IntentContract> | undefined, fal
     output: {
       ...defaults.output,
       ...(input.output ?? {}),
+      durationSec: clampIntentDurationSec(blockKind, input.output?.durationSec ?? defaults.output.durationSec),
     },
     motion: {
       ...defaults.motion,
@@ -893,6 +912,34 @@ function normalizeIntentContract(input: Partial<IntentContract> | undefined, fal
     audio: {
       ...defaults.audio,
       ...(input.audio ?? {}),
+    },
+    sceneComposer: {
+      styleFrame: sceneComposer?.styleFrame ?? defaults.sceneComposer.styleFrame,
+      fal: {
+        cfgScale: Math.min(1, Math.max(0, sceneComposer?.fal?.cfgScale ?? defaults.sceneComposer.fal.cfgScale)),
+        generateAudio:
+          typeof sceneComposer?.fal?.generateAudio === "boolean"
+            ? sceneComposer.fal.generateAudio
+            : defaults.sceneComposer.fal.generateAudio,
+        voiceIds: Array.isArray(sceneComposer?.fal?.voiceIds)
+          ? sceneComposer.fal.voiceIds.slice(0, 2).filter((entry) => typeof entry === "string")
+          : defaults.sceneComposer.fal.voiceIds,
+      },
+      multiPrompt: {
+        enabled:
+          typeof sceneComposer?.multiPrompt?.enabled === "boolean"
+            ? sceneComposer.multiPrompt.enabled
+            : defaults.sceneComposer.multiPrompt.enabled,
+        shots: Array.isArray(sceneComposer?.multiPrompt?.shots)
+          ? sceneComposer.multiPrompt.shots
+              .map((entry) => ({
+                prompt: typeof entry?.prompt === "string" ? entry.prompt : "",
+                durationSec: clampSceneBlockDurationSec(entry?.durationSec ?? defaults.output.durationSec),
+              }))
+              .slice(0, 8)
+          : defaults.sceneComposer.multiPrompt.shots,
+        shotType: sceneComposer?.multiPrompt?.shotType === "intelligent" ? "intelligent" : defaults.sceneComposer.multiPrompt.shotType,
+      },
     },
     anglePreset: input.anglePreset ?? defaults.anglePreset,
     matchLensAndLighting:
@@ -915,11 +962,23 @@ function normalizeClipForTrack(track: Track, clip: Clip): Clip {
   };
 
   if (clip.type === "intent") {
+    const normalizedIntent = normalizeIntentContract(clip.intent, "scene");
+    const syncedIntent =
+      normalizedIntent.blockKind === "scene"
+        ? {
+            ...normalizedIntent,
+            output: {
+              ...normalizedIntent.output,
+              // Keep UI duration in sync with timeline clip duration using upper-nearest second.
+              durationSec: sceneDurationSecFromClipMs(base.durationMs),
+            },
+          }
+        : normalizedIntent;
     return {
       ...base,
       type: "intent",
       assetId: base.assetId,
-      intent: normalizeIntentContract(clip.intent, "scene"),
+      intent: syncedIntent,
       intentRender: normalizeIntentRenderState(clip.intentRender),
     };
   }
@@ -1307,7 +1366,9 @@ function sortClips(clips: Clip[]): Clip[] {
 }
 
 function sanitizeClip(clip: Clip): Clip {
-  const durationMs = Math.max(1, Math.round(clip.durationMs));
+  const isSceneIntent = clip.type === "intent" && clip.intent.blockKind === "scene";
+  const maxDurationMs = isSceneIntent ? SCENE_BLOCK_DURATION_MAX_SEC * 1000 : Number.POSITIVE_INFINITY;
+  const durationMs = Math.min(maxDurationMs, Math.max(1, Math.round(clip.durationMs)));
   const startMs = Math.max(0, Math.round(clip.startMs));
   const inMs = Math.round(clip.inMs);
   return {
@@ -2129,18 +2190,31 @@ export default function App() {
     return Math.max(MIN_CLIP_DURATION_MS, Math.round(contract.output.durationSec * 1000));
   };
 
+  const resolveIntentTitle = (kind: IntentBlockKind, titleOverride?: string) => {
+    const fallback = createDefaultIntentContract(kind).title;
+    const trimmed = titleOverride?.trim();
+    return trimmed && trimmed.length > 0 ? trimmed : fallback;
+  };
+
+  const isAudioIntentKind = (kind: IntentBlockKind) => kind === "vo" || kind === "music" || kind === "sfx";
+
   const addIntentToTimeline = (
     kind: IntentBlockKind,
     targetTrackId?: string,
     startAtMs?: number,
     durationHintMs?: number,
+    titleOverride?: string,
   ) => {
     if (!intentTimelineEnabled) {
       setLog("intentTimelineV1 disabled (set localStorage.mav.intentTimelineV1=1).");
       return;
     }
-    const contract = createDefaultIntentContract(kind);
-    const isAudioIntent = kind === "vo" || kind === "music" || kind === "sfx";
+    const contract = {
+      ...createDefaultIntentContract(kind),
+      title: resolveIntentTitle(kind, titleOverride),
+    };
+    const isAudioIntent = isAudioIntentKind(kind);
+    const shouldCreateLinkedAudio = kind === "scene";
     const requiredTrackKind: TrackKind = isAudioIntent ? "audio" : "video";
     const startMs = Math.max(0, Math.round(startAtMs ?? playheadMs));
     const durationMs = resolveIntentDurationMs(kind, durationHintMs);
@@ -2167,12 +2241,14 @@ export default function App() {
       inMs: 0,
       outMs: durationMs,
       mediaRole: toMediaRole(targetTrack.kind),
+      linkGroupId: shouldCreateLinkedAudio ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined,
+      linkLocked: shouldCreateLinkedAudio,
       intent: contract,
       intentRender: createDefaultIntentRenderState(),
     };
 
     setProjectWithNormalize((prev) => {
-      const nextTracks = prev.timeline.tracks.map((track) =>
+      let nextTracks = prev.timeline.tracks.map((track) =>
         track.id === targetTrack.id
           ? {
               ...track,
@@ -2180,6 +2256,36 @@ export default function App() {
             }
           : track,
       );
+
+      if (shouldCreateLinkedAudio && nextClip.linkGroupId) {
+        const resolvedAudio = findOrCreateUnlockedTrack(nextTracks, "audio");
+        if (resolvedAudio) {
+          nextTracks = resolvedAudio.tracks;
+          const audioTrack = {
+            ...nextTracks[resolvedAudio.trackIndex],
+            clips: [...nextTracks[resolvedAudio.trackIndex].clips],
+          };
+          const audioClipId = `intent-${crypto.randomUUID().slice(0, 8)}`;
+          const audioClip: IntentClip = {
+            id: audioClipId,
+            type: "intent",
+            label: `${contract.title} audio`,
+            assetId: null,
+            startMs,
+            durationMs,
+            inMs: 0,
+            outMs: durationMs,
+            mediaRole: "audio",
+            linkGroupId: nextClip.linkGroupId,
+            linkLocked: true,
+            intent: contract,
+            intentRender: createDefaultIntentRenderState(),
+          };
+          audioTrack.clips = sortClips([...audioTrack.clips, audioClip]);
+          nextTracks[resolvedAudio.trackIndex] = audioTrack;
+        }
+      }
+
       return {
         ...prev,
         timeline: {
@@ -2196,7 +2302,11 @@ export default function App() {
     setSelection({ trackId: targetTrack.id, clipId });
     setSelectedClipKeys([`${targetTrack.id}:${clipId}`]);
     setPlayheadMs(startMs);
-    setLog(`Intent block created: ${contract.title}`);
+    setLog(
+      shouldCreateLinkedAudio
+        ? `Intent block created: ${contract.title} (linked video/audio).`
+        : `Intent block created: ${contract.title}`,
+    );
   };
 
   const addIntentToNewTrack = (
@@ -2204,19 +2314,24 @@ export default function App() {
     trackKind: "video" | "audio",
     startAtMs: number,
     durationHintMs?: number,
+    titleOverride?: string,
   ) => {
     if (!intentTimelineEnabled) {
       setLog("intentTimelineV1 disabled (set localStorage.mav.intentTimelineV1=1).");
       return;
     }
-    const requiresAudio = kind === "vo" || kind === "music" || kind === "sfx";
+    const requiresAudio = isAudioIntentKind(kind);
+    const shouldCreateLinkedAudio = kind === "scene";
     const requiredTrackKind: "video" | "audio" = requiresAudio ? "audio" : "video";
     if (trackKind !== requiredTrackKind) {
       setLog(requiredTrackKind === "audio" ? "Intent audio only on audio tracks." : "Intent video only on video tracks.");
       return;
     }
 
-    const contract = createDefaultIntentContract(kind);
+    const contract = {
+      ...createDefaultIntentContract(kind),
+      title: resolveIntentTitle(kind, titleOverride),
+    };
     const startMs = Math.max(0, Math.round(startAtMs));
     const durationMs = resolveIntentDurationMs(kind, durationHintMs);
     const createdTrackId = nextTrackId(project.timeline.tracks, trackKind);
@@ -2231,6 +2346,8 @@ export default function App() {
       inMs: 0,
       outMs: durationMs,
       mediaRole: toMediaRole(trackKind),
+      linkGroupId: shouldCreateLinkedAudio ? `link-${crypto.randomUUID().slice(0, 8)}` : undefined,
+      linkLocked: shouldCreateLinkedAudio,
       intent: contract,
       intentRender: createDefaultIntentRenderState(),
     };
@@ -2265,6 +2382,35 @@ export default function App() {
         ...tracks[trackIndex],
         clips: sortClips([...tracks[trackIndex].clips, nextClip]),
       };
+
+      if (shouldCreateLinkedAudio && nextClip.linkGroupId) {
+        const resolvedAudio = findOrCreateUnlockedTrack(tracks, "audio");
+        if (resolvedAudio) {
+          tracks = resolvedAudio.tracks;
+          const audioTrack = {
+            ...tracks[resolvedAudio.trackIndex],
+            clips: [...tracks[resolvedAudio.trackIndex].clips],
+          };
+          const audioClipId = `intent-${crypto.randomUUID().slice(0, 8)}`;
+          const audioClip: IntentClip = {
+            id: audioClipId,
+            type: "intent",
+            label: `${contract.title} audio`,
+            assetId: null,
+            startMs,
+            durationMs,
+            inMs: 0,
+            outMs: durationMs,
+            mediaRole: "audio",
+            linkGroupId: nextClip.linkGroupId,
+            linkLocked: true,
+            intent: contract,
+            intentRender: createDefaultIntentRenderState(),
+          };
+          audioTrack.clips = sortClips([...audioTrack.clips, audioClip]);
+          tracks[resolvedAudio.trackIndex] = audioTrack;
+        }
+      }
       return {
         ...prev,
         timeline: {
@@ -2281,11 +2427,15 @@ export default function App() {
     setSelection({ trackId: createdTrackId, clipId });
     setSelectedClipKeys([`${createdTrackId}:${clipId}`]);
     setPlayheadMs(startMs);
-    setLog(`Created ${trackKind} track and added intent ${contract.title}.`);
+    setLog(
+      shouldCreateLinkedAudio
+        ? `Created ${trackKind} track and added intent ${contract.title} (linked video/audio).`
+        : `Created ${trackKind} track and added intent ${contract.title}.`,
+    );
   };
 
-  const createIntentBlock = (kind: IntentBlockKind) => {
-    addIntentToTimeline(kind, undefined, playheadMs);
+  const createIntentBlock = (kind: IntentBlockKind, titleOverride?: string) => {
+    addIntentToTimeline(kind, undefined, playheadMs, undefined, titleOverride);
   };
 
   const persistAnalysisCache = () => {
@@ -3765,18 +3915,65 @@ export default function App() {
   };
 
   const setIntentContract = (nextContract: IntentContract) => {
-    if (!project.aiGeneration.selectedClipId) return;
-    updateIntentClip(project.aiGeneration.selectedClipId, (clip) => ({
-      ...clip,
-      label: nextContract.title,
-      durationMs: Math.max(1000, Math.round(nextContract.output.durationSec * 1000)),
-      outMs: clip.inMs + Math.max(1000, Math.round(nextContract.output.durationSec * 1000)),
-      intent: nextContract,
-      intentRender: {
-        ...clip.intentRender,
-        hasDraftChanges: clip.intentRender.status === "ready" || clip.intentRender.status === "failed" ? true : clip.intentRender.hasDraftChanges,
+    const selectedId = project.aiGeneration.selectedClipId;
+    if (!selectedId) return;
+
+    const selected = findIntentClipById(project, selectedId);
+    if (!selected) return;
+
+    const normalizedContract: IntentContract = {
+      ...nextContract,
+      output: {
+        ...nextContract.output,
+        durationSec: clampIntentDurationSec(nextContract.blockKind, nextContract.output.durationSec),
       },
-    }));
+    };
+    const nextDurationMs = Math.max(1000, Math.round(normalizedContract.output.durationSec * 1000));
+    const linkedGroupId =
+      normalizedContract.blockKind === "scene" && selected.clip.linkGroupId && selected.clip.linkLocked !== false
+        ? selected.clip.linkGroupId
+        : null;
+
+    setProjectWithNormalize((prev) => {
+      const tracks = prev.timeline.tracks.map((track) => ({
+        ...track,
+        clips: track.clips.map((clip) => {
+          const isSelected = clip.id === selectedId;
+          const isLinked = Boolean(linkedGroupId && clip.linkGroupId === linkedGroupId);
+          if (!isSelected && !isLinked) return clip;
+
+          const resized = sanitizeClip({
+            ...clip,
+            label: normalizedContract.title,
+            durationMs: nextDurationMs,
+            outMs: clip.inMs + nextDurationMs,
+          });
+
+          if (!isIntentClip(resized)) {
+            return resized;
+          }
+
+          return {
+            ...resized,
+            intent: normalizedContract,
+            intentRender: {
+              ...resized.intentRender,
+              hasDraftChanges:
+                resized.intentRender.status === "ready" || resized.intentRender.status === "failed"
+                  ? true
+                  : resized.intentRender.hasDraftChanges,
+            },
+          };
+        }),
+      }));
+      return {
+        ...prev,
+        timeline: {
+          ...prev.timeline,
+          tracks,
+        },
+      };
+    });
   };
 
   const queueIntentGeneration = () => {
@@ -3786,6 +3983,23 @@ export default function App() {
     if (!selected) {
       setLog("Select an intent block before generating.");
       return;
+    }
+
+    let falSummary: string | null = null;
+    if (selected.clip.intent.blockKind === "scene") {
+      const falRequest = buildSceneFalRequest(selected.clip.intent, {
+        assets: project.assets.map((asset) => ({
+          id: asset.id,
+          kind: asset.kind,
+          url: asset.url,
+          name: asset.name,
+        })),
+        referenceBank: project.aiGeneration.referenceBank,
+      });
+      console.info("[scene-fal-request]", falRequest);
+      falSummary = `${falRequest.mode} -> ${falRequest.endpoint}${
+        falRequest.warnings.length > 0 ? ` (${falRequest.warnings.length} warning(s))` : ""
+      }`;
     }
 
     const versionId = `v-${crypto.randomUUID().slice(0, 8)}`;
@@ -3820,7 +4034,9 @@ export default function App() {
       versionId,
       contractSnapshot: snapshot,
     });
-    setLog(`Intent generation queued: ${selected.clip.label} (${versionId})`);
+    setLog(
+      `Intent generation queued: ${selected.clip.label} (${versionId})${falSummary ? ` | Scene payload: ${falSummary}` : ""}`,
+    );
   };
 
   const retryIntentVersion = (clipId: string, versionId: string) => {
@@ -3920,9 +4136,9 @@ export default function App() {
     setLog("First frame updated from previous continuity.");
   };
 
-  const addReferenceToBank = (target: "characters" | "objects", source: "source-monitor" | "timeline-program") => {
+  const addReferenceToBank = (target: "characters" | "objects", source: "source-monitor" | "timeline-program"): string | null => {
     const frame = createFrameFromSourceContext(source);
-    if (!frame) return;
+    if (!frame) return null;
     const entry: IntentBankRef = {
       id: `${target.slice(0, 3)}-${crypto.randomUUID().slice(0, 8)}`,
       label: `${frame.assetLabel} @ ${Math.round(frame.timeMs / 1000)}s`,
@@ -3946,6 +4162,7 @@ export default function App() {
       { recordHistory: false },
     );
     setLog(`Reference added to ${target}.`);
+    return entry.id;
   };
 
   const removeReferenceFromBank = (target: "characters" | "objects", bankRefId: string) => {
@@ -6509,6 +6726,32 @@ export default function App() {
         intentRender: selectedIntentClip.intentRender,
       }
     : null;
+  const aiComposerSelection = useMemo<AIGenerationPanelSelection>(() => {
+    if (!selectedClip) {
+      return { kind: "none", label: null };
+    }
+
+    if (isIntentClip(selectedClip)) {
+      const isAudioBlock =
+        selectedClip.intent.blockKind === "vo" ||
+        selectedClip.intent.blockKind === "music" ||
+        selectedClip.intent.blockKind === "sfx";
+      const label = selectedClip.intent.title || selectedClip.label || "Intent block";
+      return isAudioBlock
+        ? { kind: "audio-block", label }
+        : { kind: "scene-block", label };
+    }
+
+    const asset = project.assets.find((entry) => entry.id === selectedClip.assetId) ?? null;
+    const label = selectedClip.label || asset?.name || "Media clip";
+    if (asset?.kind === "image") {
+      return { kind: "image", label };
+    }
+    if (asset?.kind === "audio") {
+      return { kind: "media", label, mediaKind: "audio" };
+    }
+    return { kind: "media", label, mediaKind: "video" };
+  }, [project.assets, selectedClip]);
   const intentOverlay = useMemo(() => {
     if (!selectedIntentClip) return null;
     const activeVersion = selectedIntentClip.intentRender.activeVersionId
@@ -6670,7 +6913,7 @@ export default function App() {
                   })();
                 }}
                 onAddToTimeline={(assetId) => addAssetToTimeline(assetId)}
-                onAddIntentToTimeline={(kind) => createIntentBlock(kind)}
+                onAddIntentToTimeline={(kind, title) => createIntentBlock(kind, title)}
                 onAssetDragStart={(payload) => {
                   setActiveAssetDrag(payload);
                   setActiveIntentDrag(null);
@@ -6793,6 +7036,7 @@ export default function App() {
             aiGeneration={(
               <AIGenerationPanel
                 selectedClip={selectedIntentPanelState}
+                selection={aiComposerSelection}
                 referenceBank={project.aiGeneration.referenceBank}
                 sourceContext={aiGenerationSourceContext}
                 onContractChange={setIntentContract}
@@ -6869,8 +7113,8 @@ export default function App() {
             onAssetDrop={(assetId, trackId, startMs, durationHintMs) => {
               addAssetToTimeline(assetId, trackId, startMs, durationHintMs);
             }}
-            onIntentDrop={(kind, trackId, startMs, durationHintMs) => {
-              addIntentToTimeline(kind, trackId, startMs, durationHintMs);
+            onIntentDrop={(kind, trackId, startMs, durationHintMs, title) => {
+              addIntentToTimeline(kind, trackId, startMs, durationHintMs, title);
             }}
             onSourceRangeDrop={(payload, trackId, startMs) => {
               insertSourceRangeToTimeline({
@@ -6885,8 +7129,8 @@ export default function App() {
             onAssetDropToNewTrack={(assetId, trackKind, startMs, durationHintMs) => {
               addAssetToNewTrack(assetId, trackKind, startMs, durationHintMs);
             }}
-            onIntentDropToNewTrack={(kind, trackKind, startMs, durationHintMs) => {
-              addIntentToNewTrack(kind, trackKind, startMs, durationHintMs);
+            onIntentDropToNewTrack={(kind, trackKind, startMs, durationHintMs, title) => {
+              addIntentToNewTrack(kind, trackKind, startMs, durationHintMs, title);
             }}
             onSelectClipKeys={setSelectionFromKeys}
             onClearSelection={() => setSelectionFromKeys([])}

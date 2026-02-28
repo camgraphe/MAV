@@ -74,6 +74,7 @@ body {
   border-bottom: 0;
   overflow: auto;
   position: relative;
+  z-index: 20;
 }
 
 .editorCenter {
@@ -352,6 +353,8 @@ select {
 .mediaBin {
   display: grid;
   gap: 10px;
+  position: relative;
+  isolation: isolate;
 }
 
 .mediaBin .panelHeader {
@@ -359,6 +362,8 @@ select {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0;
+  position: relative;
+  z-index: 6;
 }
 
 .mediaBin .panelHeader h2 {
@@ -459,6 +464,38 @@ select {
   padding: 0;
 }
 
+.mediaCreateMenuWrap {
+  position: relative;
+}
+
+.mediaCreateMenu {
+  position: fixed;
+  min-width: 176px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid #2f4964;
+  background: #102236;
+  display: grid;
+  gap: 4px;
+  z-index: 500;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.mediaCreateMenu button {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #162b43;
+  color: #dcecff;
+  text-align: left;
+  font-size: 12px;
+  padding: 7px 9px;
+}
+
+.mediaCreateMenu button:hover {
+  border-color: #46729b;
+  background: #1d3550;
+}
+
 .mediaViewToggle {
   display: flex;
   gap: 4px;
@@ -483,72 +520,100 @@ select {
   color: #dcecff;
 }
 
-.intentTemplatePanel {
-  border: 1px solid #2f445f;
-  border-radius: 10px;
-  background: #142235;
-  padding: 10px;
-  display: grid;
-  gap: 8px;
-}
-
-.intentTemplatePanel header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.intentTemplatePanel h3 {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: #a7c0dd;
-}
-
-.intentTemplateGrid {
-  display: grid;
-  gap: 6px;
-  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-}
-
-.intentTemplateCard {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 8px;
-  border: 1px solid #32506f;
-  background: #16283d;
+.intentLibraryCard {
   cursor: grab;
 }
 
-.intentTemplateCard strong {
-  display: block;
+.intentLibraryCard .assetActions {
+  opacity: 1;
+}
+
+.intentLibraryPreview {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.intentLibraryPlaceholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+}
+
+.intentLibraryPlaceholder.video {
+  background: linear-gradient(160deg, rgba(51, 94, 136, 0.44), rgba(18, 35, 56, 0.82));
+}
+
+.intentLibraryPlaceholder.audio {
+  background: linear-gradient(160deg, rgba(48, 93, 122, 0.52), rgba(17, 36, 52, 0.84));
+}
+
+.intentLibraryImage {
+  width: 100%;
+  height: 100%;
+  border: 1px dashed rgba(154, 188, 219, 0.48);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #d7e8fb;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.intentLibraryWaveform {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.intentLibraryWaveform span {
+  width: 3px;
+  min-height: 20%;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #9bd0ff, #3b8fd8);
+}
+
+.intentLibraryMeta {
+  gap: 6px;
+}
+
+.intentLibraryNameInput {
+  width: 100%;
+  border: 1px solid #35506d;
+  background: #112033;
+  color: #e6f2ff;
+  border-radius: 7px;
+  padding: 5px 7px;
   font-size: 12px;
-  color: #e8f3ff;
 }
 
-.intentTemplateCard small {
-  display: block;
-  margin-top: 2px;
-  font-size: 10px;
-  color: #9ab6d4;
+.intentLibraryNameInput:focus {
+  outline: 1px solid #53a7ff;
+  border-color: #4b95e2;
 }
 
-.intentTemplateCard.videoIntent {
-  background: linear-gradient(180deg, rgba(26, 61, 94, 0.88), rgba(19, 43, 68, 0.9));
+.intentLibraryCard.audioIntent {
+  box-shadow:
+    inset 0 0 0 1px rgba(76, 136, 181, 0.28),
+    0 0 0 1px rgba(53, 98, 130, 0.16);
 }
 
-.intentTemplateCard.audioIntent {
-  background: linear-gradient(180deg, rgba(31, 65, 88, 0.88), rgba(20, 47, 64, 0.9));
+.intentLibraryCard.videoIntent {
+  box-shadow:
+    inset 0 0 0 1px rgba(82, 141, 199, 0.26),
+    0 0 0 1px rgba(59, 107, 160, 0.18);
 }
 
 .assetList {
   display: grid;
   gap: 10px;
+  position: relative;
+  z-index: 1;
 }
 
 .assetList.gridMode {
@@ -631,6 +696,15 @@ select {
   box-shadow:
     inset 0 0 0 1px rgba(75, 180, 255, 0.45),
     0 0 0 1px rgba(75, 180, 255, 0.18);
+}
+
+.intentLibraryListMeta {
+  grid-template-columns: 1fr auto;
+  column-gap: 8px;
+}
+
+.intentLibraryListMeta .intentLibraryNameInput {
+  grid-column: 1 / -1;
 }
 
 .assetPreview {
@@ -717,6 +791,14 @@ select {
   color: #d5e8ff;
 }
 
+.intentLibraryThumb {
+  padding: 4px;
+}
+
+.intentLibraryThumb .intentLibraryImage {
+  font-size: 10px;
+}
+
 .assetMeta {
   display: grid;
   gap: 2px;
@@ -783,6 +865,21 @@ select {
   opacity: 0.9;
 }
 
+.intentLibraryStrip {
+  grid-area: wave;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.intentLibraryStrip span {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(98, 140, 182, 0.82), rgba(39, 75, 114, 0.9));
+  opacity: 0.65;
+}
+
 .assetWaveform {
   grid-area: wave;
   height: 26px;
@@ -795,6 +892,10 @@ select {
   width: 2px;
   border-radius: 2px;
   background: linear-gradient(180deg, #7bb2e0, #2d84ce);
+}
+
+.intentLibraryWaveRow {
+  height: 26px;
 }
 
 @media (max-width: 420px) {
@@ -2064,6 +2165,352 @@ select {
   padding: 12px;
   display: grid;
   gap: 10px;
+}
+
+.aiGenerationPanelComposer .aiGenAccordion {
+  padding-right: 0;
+}
+
+.aiComposerBlank {
+  border: 1px solid #345171;
+  border-radius: 10px;
+  background: linear-gradient(165deg, #112135, #0f1c2c);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.aiComposerBlankCanvas {
+  border: 1px dashed #4e769f;
+  border-radius: 9px;
+  min-height: 190px;
+  display: grid;
+  place-items: center;
+  background: rgba(26, 46, 68, 0.4);
+  color: #d7ebff;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.aiSceneComposer {
+  display: grid;
+  gap: 8px;
+}
+
+.aiSceneCard {
+  border: 1px solid #2f4765;
+  border-radius: 9px;
+  background: #132337;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.aiSceneCoreTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.aiSceneWarning {
+  color: #ffc37a;
+  font-size: 11px;
+}
+
+.aiScenePrompt {
+  display: grid;
+  gap: 4px;
+}
+
+.aiScenePrompt > span,
+.aiSceneChipRow > span,
+.aiSceneAdvancedBody label > span {
+  font-size: 11px;
+  color: #9eb5d0;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.aiScenePrompt textarea {
+  resize: vertical;
+  min-height: 68px;
+  border: 1px solid #3c5d7f;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, #132235, #0f1d2d);
+  color: #e8f4ff;
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.aiScenePrompt textarea::placeholder {
+  color: #89a5c2;
+}
+
+.aiScenePrompt textarea:focus {
+  outline: none;
+  border-color: #66b8ff;
+  box-shadow:
+    0 0 0 2px rgba(94, 179, 255, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.aiSceneModeRow {
+  display: flex;
+  gap: 6px;
+}
+
+.aiSceneChipRows {
+  display: grid;
+  gap: 6px;
+}
+
+.aiSceneChipRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.aiSceneChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.aiSceneDurationSelect {
+  max-width: 92px;
+  min-height: 26px;
+  font-size: 12px;
+}
+
+.aiSceneDurationSelect,
+.aiSceneMultiPromptItem input,
+.aiSceneMultiPromptControls select,
+.aiSceneAdvancedBody textarea,
+.aiSceneAdvancedBody input,
+.aiSceneAdvancedBody select {
+  border: 1px solid #365576;
+  border-radius: 7px;
+  background: #122135;
+  color: #e3f2ff;
+}
+
+.aiSceneMultiPromptItem input,
+.aiSceneAdvancedBody input,
+.aiSceneAdvancedBody textarea {
+  padding: 6px 8px;
+}
+
+.aiSceneDurationSelect:focus,
+.aiSceneMultiPromptItem input:focus,
+.aiSceneMultiPromptControls select:focus,
+.aiSceneAdvancedBody textarea:focus,
+.aiSceneAdvancedBody input:focus,
+.aiSceneAdvancedBody select:focus {
+  outline: none;
+  border-color: #61b5ff;
+  box-shadow: 0 0 0 2px rgba(93, 176, 255, 0.2);
+}
+
+.aiSceneInlineActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.aiSceneStartGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.aiSceneSlotGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.aiSceneSlot {
+  border: 1px solid #34506f;
+  border-radius: 8px;
+  background: #122033;
+  padding: 7px;
+  display: grid;
+  gap: 6px;
+}
+
+.aiSceneSlot.isFilled {
+  border-color: #4f8ac1;
+}
+
+.aiSceneSlotHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aiSceneSlotHead strong {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.aiSceneSlotIcon {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid #3e6488;
+  background: #1a2f47;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  color: #cfe5ff;
+}
+
+.aiSceneSlotPreview {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 6px;
+  border: 1px dashed #486b8f;
+  background: rgba(20, 38, 57, 0.6);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.aiSceneSlotPreview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.aiSceneSlotPreview span {
+  color: #b8d2ed;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.aiSceneSlotValue {
+  color: #9bb4cf;
+  font-size: 10px;
+  line-height: 1.2;
+  min-height: 24px;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.aiSceneMultiPromptList {
+  display: grid;
+  gap: 6px;
+}
+
+.aiSceneMultiPromptItem {
+  border: 1px solid #2f4d6f;
+  border-radius: 8px;
+  background: #112136;
+  padding: 6px;
+  display: grid;
+  gap: 6px;
+}
+
+.aiSceneMultiPromptHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.aiSceneMultiPromptHead strong {
+  font-size: 11px;
+  color: #cfe4fb;
+}
+
+.aiSceneMultiPromptControls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.aiSceneMultiPromptControls span {
+  font-size: 11px;
+  color: #9eb5d0;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.aiSceneMultiPromptControls select {
+  max-width: 90px;
+}
+
+.aiSceneSlotActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.aiSceneSlotActions .iconBtn.tiny {
+  min-height: 24px;
+  font-size: 10px;
+  padding: 3px 5px;
+}
+
+.aiSceneAdvanced {
+  border: 1px solid #2f4562;
+  border-radius: 9px;
+  background: #112034;
+  overflow: hidden;
+}
+
+.aiSceneAdvancedToggle {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #2d415b;
+  background: #1a2c41;
+  color: #d8e8fb;
+  padding: 7px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.aiSceneAdvancedBody {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.aiSceneAdvancedBody label {
+  display: grid;
+  gap: 4px;
+}
+
+.aiSceneToggleRow {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.aiSceneToggleRow span {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+
+.aiSceneVoiceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 1300px) {
+  .aiSceneStartGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .aiRefCards {
