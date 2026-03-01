@@ -2,7 +2,7 @@
   "name": "mav",
   "private": true,
   "version": "0.1.0",
-  "description": "MAV - MVP montage video connecte a maxvideoai.com",
+  "description": "MAV - AI-assisted video editing MVP connected to maxvideoai.com",
   "packageManager": "pnpm@10.18.2",
   "scripts": {
     "dev": "pnpm -r --parallel dev",

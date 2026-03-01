@@ -115,6 +115,7 @@ type CompactSlotProps = {
   icon: SlotIconKind;
   label: string;
   tooltip: string;
+  menuDirection?: "up" | "down";
   valueLabel: string | null;
   thumbUrl: string | null;
   actions: Array<{
@@ -166,7 +167,7 @@ function SlotIcon({ kind }: { kind: SlotIconKind }) {
   );
 }
 
-function CompactSlot({ icon, label, tooltip, valueLabel, thumbUrl, actions }: CompactSlotProps) {
+function CompactSlot({ icon, label, tooltip, menuDirection = "down", valueLabel, thumbUrl, actions }: CompactSlotProps) {
   const hasValue = Boolean(valueLabel);
   const [menuOpen, setMenuOpen] = useState(false);
   const rootRef = useRef<HTMLElement | null>(null);
@@ -202,7 +203,11 @@ function CompactSlot({ icon, label, tooltip, valueLabel, thumbUrl, actions }: Co
         {valueLabel ? <small className="aiSceneSlotMeta">{valueLabel}</small> : null}
       </button>
       {menuOpen ? (
-        <div className="aiSceneSlotMenu" role="menu" aria-label={`${label} actions`}>
+        <div
+          className={`aiSceneSlotMenu ${menuDirection === "up" ? "menuUp" : "menuDown"}`}
+          role="menu"
+          aria-label={`${label} actions`}
+        >
           {actions.map((action) => (
             <button
               key={action.id}
@@ -565,7 +570,7 @@ function SceneBlockComposer({
           <CompactSlot
             icon="start"
             label="Start"
-            tooltip="Start frame: click to choose previous clip, timeline, source, or import image."
+            tooltip="Starting visual reference for the shot."
             valueLabel={intent.firstFrame ? `${intent.firstFrame.assetLabel} @ ${formatTimeLabel(intent.firstFrame.timeMs)}` : null}
             thumbUrl={intent.firstFrame?.thumbnailUrl ?? null}
             actions={[
@@ -604,7 +609,7 @@ function SceneBlockComposer({
           <CompactSlot
             icon="end"
             label="End"
-            tooltip="End frame (optional): click to choose timeline, source, or import image."
+            tooltip="Optional ending visual reference to guide how the shot finishes."
             valueLabel={intent.endFrame ? `${intent.endFrame.assetLabel} @ ${formatTimeLabel(intent.endFrame.timeMs)}` : null}
             thumbUrl={intent.endFrame?.thumbnailUrl ?? null}
             actions={[
@@ -642,7 +647,8 @@ function SceneBlockComposer({
         <CompactSlot
           icon="character"
           label="Character"
-          tooltip="Character reference: click to pick timeline/source frame or import image."
+          tooltip="Primary character reference for identity and consistency."
+          menuDirection="up"
           valueLabel={primaryCharacter?.label ?? null}
           thumbUrl={primaryCharacter?.thumbnailUrl ?? null}
           actions={[
@@ -676,7 +682,8 @@ function SceneBlockComposer({
         <CompactSlot
           icon="object"
           label="Object"
-          tooltip="Object reference: click to pick timeline/source frame or import image."
+          tooltip="Primary object reference for key props and continuity."
+          menuDirection="up"
           valueLabel={primaryObject?.label ?? null}
           thumbUrl={primaryObject?.thumbnailUrl ?? null}
           actions={[
@@ -710,7 +717,8 @@ function SceneBlockComposer({
         <CompactSlot
           icon="style"
           label="Style"
-          tooltip="Style/look reference: click to pick timeline/source frame or import image."
+          tooltip="Visual style reference for look, color mood, and texture."
+          menuDirection="up"
           valueLabel={intent.sceneComposer.styleFrame?.assetLabel ?? null}
           thumbUrl={intent.sceneComposer.styleFrame?.thumbnailUrl ?? null}
           actions={[
@@ -826,6 +834,212 @@ function Placeholder({ title, text }: { title: string; text: string }) {
   );
 }
 
+type SceneAttachedFilePanelProps = {
+  attachedVersion: IntentRenderVersion | null;
+  simulated: boolean;
+  primaryAction: AttachedPrimaryAction;
+  secondaryAction: AttachedSecondaryAction;
+  onSecondaryActionChange: (next: AttachedSecondaryAction) => void;
+  v2vStrength: "low" | "medium" | "high";
+  onV2vStrengthChange: (next: "low" | "medium" | "high") => void;
+  v2vKeepMotion: boolean;
+  onV2vKeepMotionChange: (next: boolean) => void;
+  upscaleFactor: 2 | 4;
+  onUpscaleFactorChange: (next: 2 | 4) => void;
+  upscaleDetailBoost: boolean;
+  onUpscaleDetailBoostChange: (next: boolean) => void;
+  replaceInTimeline: boolean;
+  onReplaceInTimelineChange: (next: boolean) => void;
+  saveAsNewClip: boolean;
+  onSaveAsNewClipChange: (next: boolean) => void;
+  lastActionMessage: string | null;
+  onStopSimulation: () => void;
+};
+
+type AttachedPrimaryAction = "rerender" | "video-edit" | "upscale";
+type AttachedSecondaryAction = "none" | "extend" | "reframe" | "variation" | "extract-frame";
+
+function SceneAttachedFilePanel({
+  attachedVersion,
+  simulated,
+  primaryAction,
+  secondaryAction,
+  onSecondaryActionChange,
+  v2vStrength,
+  onV2vStrengthChange,
+  v2vKeepMotion,
+  onV2vKeepMotionChange,
+  upscaleFactor,
+  onUpscaleFactorChange,
+  upscaleDetailBoost,
+  onUpscaleDetailBoostChange,
+  replaceInTimeline,
+  onReplaceInTimelineChange,
+  saveAsNewClip,
+  onSaveAsNewClipChange,
+  lastActionMessage,
+  onStopSimulation,
+}: SceneAttachedFilePanelProps) {
+  const versionId = attachedVersion?.id ?? "sim-v1";
+  const assetId = attachedVersion?.outputAssetId ?? "simulated-output";
+
+  return (
+    <section className="aiSceneAttachedPanel">
+      <article className="aiSceneCard aiSceneAttachedCard">
+        <div className="aiSceneAttachedHead">
+          <strong>{simulated ? "Attached File Panel (Simulated)" : "Attached File Panel"}</strong>
+          <span className="aiSceneAttachedBadge">{simulated ? "SIMULATED" : "ATTACHED"}</span>
+        </div>
+        {attachedVersion?.thumbnailUrl ? (
+          <div className="aiSceneAttachedPreview">
+            <img src={attachedVersion.thumbnailUrl} alt="Attached render preview" />
+          </div>
+        ) : null}
+        <div className="aiSceneAttachedSecondaryRow">
+          <button
+            type="button"
+            className={`iconBtn tiny ${secondaryAction === "none" ? "activeTool" : ""}`}
+            onClick={() => onSecondaryActionChange("none")}
+          >
+            No transform
+          </button>
+          <button
+            type="button"
+            className={`iconBtn tiny ${secondaryAction === "extend" ? "activeTool" : ""}`}
+            onClick={() => onSecondaryActionChange("extend")}
+          >
+            Extend
+          </button>
+          <button
+            type="button"
+            className={`iconBtn tiny ${secondaryAction === "reframe" ? "activeTool" : ""}`}
+            onClick={() => onSecondaryActionChange("reframe")}
+          >
+            Reframe
+          </button>
+          <button
+            type="button"
+            className={`iconBtn tiny ${secondaryAction === "variation" ? "activeTool" : ""}`}
+            onClick={() => onSecondaryActionChange("variation")}
+          >
+            Variation
+          </button>
+          <button
+            type="button"
+            className={`iconBtn tiny ${secondaryAction === "extract-frame" ? "activeTool" : ""}`}
+            onClick={() => onSecondaryActionChange("extract-frame")}
+          >
+            Extract frame
+          </button>
+        </div>
+
+        {primaryAction === "video-edit" ? (
+          <div className="aiSceneAttachedOptions">
+            <div className="aiSceneAttachedOptionRow">
+              <span>Strength</span>
+              <div className="aiSceneAttachedChipRow">
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${v2vStrength === "low" ? "activeTool" : ""}`}
+                  onClick={() => onV2vStrengthChange("low")}
+                >
+                  Low
+                </button>
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${v2vStrength === "medium" ? "activeTool" : ""}`}
+                  onClick={() => onV2vStrengthChange("medium")}
+                >
+                  Medium
+                </button>
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${v2vStrength === "high" ? "activeTool" : ""}`}
+                  onClick={() => onV2vStrengthChange("high")}
+                >
+                  High
+                </button>
+              </div>
+            </div>
+            <label className="aiSceneAttachedCheck">
+              <input type="checkbox" checked={v2vKeepMotion} onChange={(event) => onV2vKeepMotionChange(event.target.checked)} />
+              Keep original motion pacing
+            </label>
+          </div>
+        ) : null}
+
+        {primaryAction === "upscale" ? (
+          <div className="aiSceneAttachedOptions">
+            <div className="aiSceneAttachedOptionRow">
+              <span>Scale</span>
+              <div className="aiSceneAttachedChipRow">
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${upscaleFactor === 2 ? "activeTool" : ""}`}
+                  onClick={() => onUpscaleFactorChange(2)}
+                >
+                  2x
+                </button>
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${upscaleFactor === 4 ? "activeTool" : ""}`}
+                  onClick={() => onUpscaleFactorChange(4)}
+                >
+                  4x
+                </button>
+              </div>
+            </div>
+            <label className="aiSceneAttachedCheck">
+              <input
+                type="checkbox"
+                checked={upscaleDetailBoost}
+                onChange={(event) => onUpscaleDetailBoostChange(event.target.checked)}
+              />
+              Detail boost
+            </label>
+          </div>
+        ) : null}
+
+        {primaryAction === "rerender" ? (
+          <p className="hint">Use current prompt, references, and model settings. Open the composer to edit options before launching.</p>
+        ) : null}
+
+        <div className="aiSceneAttachedDelivery">
+          <label className="aiSceneAttachedCheck">
+            <input
+              type="checkbox"
+              checked={replaceInTimeline}
+              onChange={(event) => onReplaceInTimelineChange(event.target.checked)}
+            />
+            Replace in timeline
+          </label>
+          <label className="aiSceneAttachedCheck">
+            <input
+              type="checkbox"
+              checked={saveAsNewClip}
+              onChange={(event) => onSaveAsNewClipChange(event.target.checked)}
+            />
+            Save as new clip
+          </label>
+        </div>
+
+        <div className="aiSceneAttachedMeta">
+          <small>Version: {versionId}</small>
+          <small>Asset: {assetId}</small>
+        </div>
+        <div className="aiSceneAttachedActions">
+          {simulated ? (
+            <button type="button" className="iconBtn tiny" onClick={onStopSimulation}>
+              Stop simulation
+            </button>
+          ) : null}
+        </div>
+        {lastActionMessage ? <p className="hint">{lastActionMessage}</p> : null}
+      </article>
+    </section>
+  );
+}
+
 export function AIGenerationPanel({
   selectedClip,
   selection,
@@ -841,43 +1055,246 @@ export function AIGenerationPanel({
   onAddBankRef,
   onRemoveBankRef: _onRemoveBankRef,
 }: AIGenerationPanelProps) {
+  const [simulateAttachedPanel, setSimulateAttachedPanel] = useState(false);
+  const [attachedPrimaryAction, setAttachedPrimaryAction] = useState<AttachedPrimaryAction>("rerender");
+  const [attachedSecondaryAction, setAttachedSecondaryAction] = useState<AttachedSecondaryAction>("none");
+  const [attachedV2vStrength, setAttachedV2vStrength] = useState<"low" | "medium" | "high">("medium");
+  const [attachedV2vKeepMotion, setAttachedV2vKeepMotion] = useState(true);
+  const [attachedUpscaleFactor, setAttachedUpscaleFactor] = useState<2 | 4>(2);
+  const [attachedUpscaleDetailBoost, setAttachedUpscaleDetailBoost] = useState(true);
+  const [attachedReplaceInTimeline, setAttachedReplaceInTimeline] = useState(true);
+  const [attachedSaveAsNewClip, setAttachedSaveAsNewClip] = useState(false);
+  const [attachedLastActionMessage, setAttachedLastActionMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSimulateAttachedPanel(false);
+    setAttachedPrimaryAction("rerender");
+    setAttachedSecondaryAction("none");
+    setAttachedV2vStrength("medium");
+    setAttachedV2vKeepMotion(true);
+    setAttachedUpscaleFactor(2);
+    setAttachedUpscaleDetailBoost(true);
+    setAttachedReplaceInTimeline(true);
+    setAttachedSaveAsNewClip(false);
+    setAttachedLastActionMessage(null);
+  }, [selectedClip?.id]);
+
   const latestVersion = useMemo(() => {
     if (!selectedClip) return null;
     return selectedClip.intentRender.versions.find((entry) => entry.id === selectedClip.intentRender.activeVersionId) ?? null;
   }, [selectedClip]);
+  const sceneAttachedVersion = useMemo(() => {
+    if (!selectedClip || selectedClip.intent.blockKind !== "scene") return null;
+    const active =
+      selectedClip.intentRender.versions.find((entry) => entry.id === selectedClip.intentRender.activeVersionId) ?? null;
+    if (active?.outputAssetId) return active;
+    const fallback = [...selectedClip.intentRender.versions].reverse().find((entry) => Boolean(entry.outputAssetId));
+    return fallback ?? null;
+  }, [selectedClip]);
   const sceneIntent = selectedClip?.intent.blockKind === "scene" ? selectedClip.intent : null;
+  const hasAttachedSceneFile = Boolean(sceneAttachedVersion?.outputAssetId);
+  const hasAttachedContext =
+    selection.kind === "scene-block" && Boolean(selectedClip) && (hasAttachedSceneFile || simulateAttachedPanel);
+  const showSceneAttachedPanel = hasAttachedContext && attachedPrimaryAction !== "rerender";
   const scenePromptReady = sceneIntent
     ? sceneIntent.sceneComposer.multiPrompt.enabled
       ? sceneIntent.sceneComposer.multiPrompt.shots.some((entry) => entry.prompt.trim().length > 0)
       : sceneIntent.prompt.trim().length > 0
     : true;
-  const canGenerate = Boolean(selectedClip) && scenePromptReady;
-  const generateLabel = sceneIntent
+  const attachedActionPrice = useMemo(() => {
+    if (!sceneIntent) return 0;
+    const base = estimateScenePrice(sceneIntent);
+    const primaryMultiplier =
+      attachedPrimaryAction === "video-edit"
+        ? 1.12
+        : attachedPrimaryAction === "upscale"
+          ? attachedUpscaleFactor === 4
+            ? 0.62
+            : 0.38
+          : 1;
+    const secondaryExtra =
+      attachedSecondaryAction === "none"
+        ? 0
+        : attachedSecondaryAction === "extract-frame"
+          ? 0.05
+          : attachedSecondaryAction === "reframe"
+            ? 0.12
+            : attachedSecondaryAction === "variation"
+              ? 0.2
+              : 0.16;
+    const v2vExtra =
+      attachedPrimaryAction === "video-edit"
+        ? attachedV2vStrength === "high"
+          ? 0.22
+          : attachedV2vStrength === "medium"
+            ? 0.13
+            : 0.08
+        : 0;
+    const upscaleExtra = attachedPrimaryAction === "upscale" && attachedUpscaleDetailBoost ? 0.07 : 0;
+    return Math.round((base * primaryMultiplier + secondaryExtra + v2vExtra + upscaleExtra) * 100) / 100;
+  }, [
+    attachedPrimaryAction,
+    attachedSecondaryAction,
+    attachedUpscaleDetailBoost,
+    attachedUpscaleFactor,
+    attachedV2vStrength,
+    sceneIntent,
+  ]);
+  const canGenerate = showSceneAttachedPanel ? Boolean(selectedClip) : Boolean(selectedClip) && scenePromptReady;
+  const defaultGenerateLabel = sceneIntent
     ? `Generate · ~$${estimateScenePrice(sceneIntent).toFixed(2)}`
     : "Generate new version";
+  const attachedGenerateLabel =
+    attachedPrimaryAction === "video-edit"
+      ? `Video Edit · ~$${attachedActionPrice.toFixed(2)}`
+      : attachedPrimaryAction === "upscale"
+        ? `Upscale · ~$${attachedActionPrice.toFixed(2)}`
+        : `Re-render · ~$${attachedActionPrice.toFixed(2)}`;
+  const generateLabel = hasAttachedContext ? attachedGenerateLabel : defaultGenerateLabel;
   const helperText = !selectedClip
     ? "Select a block to generate."
+    : showSceneAttachedPanel
+      ? "Use the sticky CTA to run the selected action for this attached file."
+    : hasAttachedContext
+      ? "Re-render mode: edit settings, then use the sticky CTA."
     : !scenePromptReady
       ? "Add prompt text before generating."
       : sceneIntent
         ? "Estimated cost updates with duration, mode, and audio."
         : null;
+  const runStickyGenerate = () => {
+    if (!hasAttachedContext) {
+      onGenerate();
+      return;
+    }
+    if (attachedPrimaryAction === "rerender") {
+      onGenerate();
+      setAttachedLastActionMessage("Re-render queued with current Scene Block settings.");
+      return;
+    }
+    const actionText = attachedPrimaryAction === "video-edit" ? "Video Edit (Kling V2V)" : "Upscale";
+    const deliveryText = attachedReplaceInTimeline
+      ? "replace in timeline"
+      : attachedSaveAsNewClip
+        ? "save as new clip"
+        : "keep as detached output";
+    setAttachedLastActionMessage(`${actionText} queued (${deliveryText}) — simulation mode.`);
+  };
+  const setAttachedPrimaryMode = (next: AttachedPrimaryAction) => {
+    setAttachedPrimaryAction(next);
+    setAttachedLastActionMessage(null);
+  };
 
   return (
     <div className="aiGenerationPanel aiGenerationPanelComposer">
       <div className="aiGenAccordion">
         {selection.kind === "none" ? <EmptyState /> : null}
         {selection.kind === "scene-block" && selectedClip ? (
-          <SceneBlockComposer
-            selectedClip={selectedClip}
-            referenceBank={referenceBank}
-            sourceContext={sourceContext}
-            onContractChange={onContractChange}
-            onSetFrame={onSetFrame}
-            onContinueFromPrevious={onContinueFromPrevious}
-            onImportSlot={onImportSlot}
-            onAddBankRef={onAddBankRef}
-          />
+          <>
+            {hasAttachedContext ? (
+              <div className="aiSceneAttachedPrimaryRow aiScenePanelInlineAction">
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${attachedPrimaryAction === "rerender" ? "activeTool" : ""}`}
+                  onClick={() => setAttachedPrimaryMode("rerender")}
+                >
+                  Re-render
+                </button>
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${attachedPrimaryAction === "video-edit" ? "activeTool" : ""}`}
+                  onClick={() => setAttachedPrimaryMode("video-edit")}
+                >
+                  Video Edit (V2V)
+                </button>
+                <button
+                  type="button"
+                  className={`iconBtn tiny ${attachedPrimaryAction === "upscale" ? "activeTool" : ""}`}
+                  onClick={() => setAttachedPrimaryMode("upscale")}
+                >
+                  Upscale
+                </button>
+                {simulateAttachedPanel ? (
+                  <button
+                    type="button"
+                    className="iconBtn tiny"
+                    onClick={() => {
+                      setSimulateAttachedPanel(false);
+                      setAttachedPrimaryAction("rerender");
+                      setAttachedLastActionMessage(null);
+                    }}
+                  >
+                    Stop simulation
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <button type="button" className="iconBtn tiny aiScenePanelInlineAction" onClick={() => setSimulateAttachedPanel(true)}>
+                Simulate attached file panel
+              </button>
+            )}
+            {showSceneAttachedPanel ? (
+              <SceneAttachedFilePanel
+                attachedVersion={sceneAttachedVersion}
+                simulated={!hasAttachedSceneFile}
+                primaryAction={attachedPrimaryAction}
+                secondaryAction={attachedSecondaryAction}
+                onSecondaryActionChange={(next) => {
+                  setAttachedSecondaryAction(next);
+                  setAttachedLastActionMessage(null);
+                }}
+                v2vStrength={attachedV2vStrength}
+                onV2vStrengthChange={(next) => {
+                  setAttachedV2vStrength(next);
+                  setAttachedLastActionMessage(null);
+                }}
+                v2vKeepMotion={attachedV2vKeepMotion}
+                onV2vKeepMotionChange={(next) => {
+                  setAttachedV2vKeepMotion(next);
+                  setAttachedLastActionMessage(null);
+                }}
+                upscaleFactor={attachedUpscaleFactor}
+                onUpscaleFactorChange={(next) => {
+                  setAttachedUpscaleFactor(next);
+                  setAttachedLastActionMessage(null);
+                }}
+                upscaleDetailBoost={attachedUpscaleDetailBoost}
+                onUpscaleDetailBoostChange={(next) => {
+                  setAttachedUpscaleDetailBoost(next);
+                  setAttachedLastActionMessage(null);
+                }}
+                replaceInTimeline={attachedReplaceInTimeline}
+                onReplaceInTimelineChange={(next) => {
+                  setAttachedReplaceInTimeline(next);
+                  if (next) setAttachedSaveAsNewClip(false);
+                  setAttachedLastActionMessage(null);
+                }}
+                saveAsNewClip={attachedSaveAsNewClip}
+                onSaveAsNewClipChange={(next) => {
+                  setAttachedSaveAsNewClip(next);
+                  if (next) setAttachedReplaceInTimeline(false);
+                  setAttachedLastActionMessage(null);
+                }}
+                lastActionMessage={attachedLastActionMessage}
+                onStopSimulation={() => {
+                  setSimulateAttachedPanel(false);
+                  setAttachedPrimaryAction("rerender");
+                  setAttachedLastActionMessage(null);
+                }}
+              />
+            ) : (
+              <SceneBlockComposer
+                selectedClip={selectedClip}
+                referenceBank={referenceBank}
+                sourceContext={sourceContext}
+                onContractChange={onContractChange}
+                onSetFrame={onSetFrame}
+                onContinueFromPrevious={onContinueFromPrevious}
+                onImportSlot={onImportSlot}
+                onAddBankRef={onAddBankRef}
+              />
+            )}
+          </>
         ) : null}
         {selection.kind === "scene-block" && !selectedClip ? (
           <Placeholder title="Scene Block" text="Select a scene block to open the composer." />
@@ -896,7 +1313,7 @@ export function AIGenerationPanel({
           <span>{selectedClip ? `${selectedClip.intentRender.versions.length} version(s)` : "No block selected"}</span>
           <span>{selectedClip ? `${selectedClip.intentRender.progressPct}%` : "0%"}</span>
         </div>
-        <button type="button" className="aiGenerateBtn" onClick={onGenerate} disabled={!canGenerate}>
+        <button type="button" className="aiGenerateBtn" onClick={runStickyGenerate} disabled={!canGenerate}>
           {generateLabel}
         </button>
         {selectedClip?.intentRender.status === "failed" && latestVersion ? (

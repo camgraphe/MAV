@@ -15,40 +15,40 @@ Owners:
 ## Week 1
 
 1. Schema + timeline base (Owner: FE1)
-- create project schema v0
-- implement tracks/clips split/trim/move/zoom/snap
-- add deterministic project serialization
+- Create project schema v0.
+- Implement track/clip split, trim, move, zoom, and snap.
+- Add deterministic project serialization.
 
 2. Preview decode path (Owner: FE2)
-- implement 1-track WebCodecs decoding
-- frame-accurate scrub loop
-- workerized thumbnails and waveform extraction
+- Implement one-track WebCodecs decoding.
+- Build a frame-accurate scrubbing loop.
+- Add workerized thumbnail and waveform extraction.
 
 3. Overlay layer (Owner: FE2)
-- text + image overlays
-- transform handles (position/scale/rotation)
+- Add text and image overlays.
+- Implement transform handles (position/scale/rotation).
 
 4. Save/load + revisions (Owner: BE1)
-- project save/load endpoints
-- signed URL handling for assets
+- Implement project save/load endpoints.
+- Add signed URL handling for assets.
 
 ## Week 2
 
 5. MP4 export service (Owner: BE2)
-- render-worker endpoint (job submit/status/cancel)
-- retries + progress events
-- output MP4 + thumbnails
+- Implement render-worker endpoints (submit/status/cancel).
+- Add retries and progress events.
+- Produce MP4 output + thumbnails.
 
 6. AI plugin framework (Owner: AI1)
-- plugin input/output contract
-- implement auto-captions OR silence-cut suggestions
+- Define plugin input/output contract.
+- Implement auto-captions or silence-cut suggestions.
 
 7. Performance pass (Owner: FE2 + QA)
-- frame cache policy
-- worker pool sizing
-- memory pressure tests for 60s and 5min projects
+- Tune frame cache policy.
+- Size worker pools.
+- Run memory pressure tests on 60s and 5min projects.
 
 8. Validation and exit report (Owner: QA)
-- A/V sync checks
-- Chrome/Edge desktop pass/fail report
-- regression list + known limits
+- Run A/V sync checks.
+- Deliver Chrome/Edge desktop pass/fail report.
+- Publish regression list + known limits.

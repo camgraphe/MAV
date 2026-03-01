@@ -1,44 +1,78 @@
 # MAV
 
-Socle V1 pour un logiciel de montage simple connecte a `maxvideoai.com`.
+MAV is a monorepo for AI-assisted video editing experiments connected to `maxvideoai.com`.
 
-## Contenu
+## Repository Structure
 
-- `apps/desktop`: application desktop (React + Vite) pour previsualiser, monter simple, lancer actions IA.
-- `apps/api`: API Node/Express qui sert de pont vers `maxvideoai.com`.
-- `packages/shared`: types partages (format de projet `.mavproj`).
+- `apps/desktop`: desktop editor app (React + Vite).
+- `apps/api`: Node/Express API bridge for AI-related actions.
+- `packages/shared`: shared project types (including `.mavproj` contract).
+- `poc/editor-web`: browser-based editor PoC.
+- `poc/render-worker`: server-side render worker PoC.
 
-## Demarrage rapide
+## Quick Start
 
 ```bash
 pnpm install
 cp .env.example .env
+```
+
+Run the legacy app stack:
+
+```bash
+pnpm dev:api
+pnpm dev:desktop
+```
+
+Run the PoC stack:
+
+```bash
+pnpm dev:poc:web
+pnpm dev:poc:render
+```
+
+Or run all workspace `dev` scripts in parallel:
+
+```bash
 pnpm dev
 ```
 
-Le front tourne sur `http://localhost:5173` et l'API sur `http://localhost:8787`.
+Default local URLs:
+- Desktop app: `http://localhost:5173`
+- API: `http://localhost:8787`
+- PoC web editor: `http://localhost:5174`
+- PoC render worker: `http://localhost:8790`
 
-## Variables d'environnement
+## Environment Variables
 
-- `MAXVIDEOAI_BASE_URL`: URL du site/API cible.
-- `MAXVIDEOAI_API_KEY`: cle API (si vide et `ALLOW_MOCK=true`, des reponses mock sont renvoyees).
-- `ALLOW_MOCK`: active les reponses locales pour developper sans backend distant.
-- `VITE_API_URL`: URL API consommee par le desktop.
+- `PORT`: API port (default `8787`).
+- `MAXVIDEOAI_BASE_URL`: target API base URL.
+- `MAXVIDEOAI_API_KEY`: API key.
+- `ALLOW_MOCK`: if `true`, allows local mock responses when API key is missing.
+- `VITE_API_URL`: API URL consumed by frontend apps.
 
-## Endpoints API (MVP)
+## Useful Scripts
+
+- `pnpm build`: build all workspaces.
+- `pnpm typecheck`: run TypeScript checks for all workspaces.
+- `pnpm license:check`: run dependency license validation.
+- `pnpm deps:report`: generate dependency report.
+- `pnpm sbom:generate`: generate SBOM.
+
+## API Endpoints (MVP)
 
 - `GET /health`
 - `POST /api/ai/subtitles`
 - `POST /api/ai/voiceover`
 - `POST /api/projects/sync`
 
-## Prochaine etape
+## Near-Term Roadmap
 
-1. Connecter les vrais endpoints `maxvideoai.com`.
-2. Ajouter generation de `mavproj` depuis la timeline.
-3. Ajouter export XML/EDL pour Premiere.
+1. Connect production endpoints from `maxvideoai.com`.
+2. Generate `.mavproj` directly from timeline state.
+3. Add XML/EDL export for Premiere workflows.
 
-## Licence
+## License
 
-Ce depot est sous licence proprietaire ("All rights reserved").  
-Voir `/LICENSE`.
+This repository is proprietary ("All rights reserved").  
+See `/LICENSE`.
