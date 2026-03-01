@@ -1,5 +1,7 @@
 # editor-web
 
+See the root `README.md` for repository-wide setup and common scripts.
+
 Current status (Product Sprint kickoff):
 - Real editor shell layout (Media Bin / Preview / Inspector / Timeline).
 - MP4 demux path via `mp4box` in a dedicated worker.
